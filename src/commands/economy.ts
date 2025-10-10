@@ -11,6 +11,9 @@ import { CURRENCY_NAME, CURRENCY_EMOJI, formatBolts } from '../economy/currency.
 import { uiExactMode, uiSigFigs } from '../game/config.js';
 import { renderAmountInline, componentsForExact } from '../util/amountRender.js';
 import { getGuildDb } from '../db/connection.js';
+import { safeDefer } from '../interactions/reply.js';
+import { formatBalance, formatExact } from '../util/formatBalance.js';
+import { walletEmbed } from './shared/walletView.js';
 
 export const commands = [
   new SlashCommandBuilder().setName('balance').setDescription('Show your play-money balance'),
@@ -210,6 +213,7 @@ export async function handleEconomy(interaction: ChatInputCommandInteraction) {
       const { getRemaining, setCooldown } = await import('../economy/cooldowns.js');
       const nowLeft = getRemaining(interaction.guildId, interaction.user.id, 'gamble');
       if (nowLeft > 0) { await interaction.reply({ content: `Cooldown: wait ${Math.ceil(nowLeft)}s.` }); break; }
+      await safeDefer(interaction, { ephemeral: false });
       // Atomic update via wallet lock
       try {
         const { getGuildDb } = await import('../db/connection.js');
@@ -239,29 +243,15 @@ export async function handleEconomy(interaction: ChatInputCommandInteraction) {
           return tx() as unknown as { newBal: number; delta: number; result: 'win' | 'lose' };
         });
         if (cdSec > 0) setCooldown(interaction.guildId, interaction.user.id, 'gamble', cdSec);
-        const theme = getGuildTheme(interaction.guildId);
-        const mode = uiExactMode(db, "guild");
-        const sig = uiSigFigs(db);
-        let balanceText: string;
-        let components: any[] = [];
-        if (mode === "inline") {
-          balanceText = renderAmountInline(result.newBal, sig);
-        } else if (mode === "on_click") {
-          const { text, row } = componentsForExact(result.newBal, sig);
-          balanceText = text;
-          components = [row];
-        } else {
-          balanceText = formatBolts(result.newBal);
-        }
-        const title = result.result === 'win' ? 'You Won!' : 'You Lost';
-        const subtitle = result.result === 'win' ? `+${formatBolts(amount)}` : `-${formatBolts(amount)}`;
-        const card = await generateCard({ layout: 'Wallet', theme, payload: { balance: result.newBal, title, subtitle } });
-        const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-        const embed = themedEmbed(theme, 'Gamble', `${result.result.toUpperCase()} ${subtitle}. New balance: ${balanceText}`).setImage(`attachment://${card.filename}`);
+        const pretty = formatBalance(result.newBal);
+        const exact = formatExact(result.newBal);
+        const betPretty = formatBolts(Math.abs(amount));
+        const headline = result.result === 'win' ? `WIN +${betPretty} 🪙. New balance:` : `LOSE -${betPretty} 🪙. New balance:`;
+        const embed = walletEmbed({ title: 'Gamble', headline, pretty, exact });
         console.log(JSON.stringify({ msg: 'econ', event: 'gamble', userId: interaction.user.id, bet: amount, result: result.result, delta: result.delta }));
-        await interaction.reply({ embeds: [embed], files: [file], components });
+        await interaction.editReply({ embeds: [embed], components: [] });
       } catch (e: any) {
-        await interaction.reply({ content: e.message || 'Gamble failed.' });
+        await interaction.editReply({ content: e.message || 'Gamble failed.' });
       }
       break;
     }

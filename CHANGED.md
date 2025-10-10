@@ -10,3 +10,8 @@
 - Added per-session lock to prevent races between auto-stand and clicks
 - Final result cards disable action buttons and include a “Play Again” button that restarts with the same bet
 - /blackjack start no longer incorrectly reports an active hand after a win
+
+2025-10-10 — Gamble card idempotent + exact balance inline
+- Reworked /gamble to use defer+editReply; eliminated InteractionAlreadyReplied errors
+- Removed “Exact/Copy” buttons on /gamble
+- Wallet card now shows the pretty number and a secondary `exact: 1,234,567` line

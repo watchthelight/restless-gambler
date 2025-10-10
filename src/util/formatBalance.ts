@@ -42,6 +42,16 @@ export function formatBalance(value: number | bigint): string {
     return (neg ? "-" : "") + out;
 }
 
+/** Format the exact integer with commas (bigint-safe). */
+export function formatExact(v: bigint | number): string {
+    const n = typeof v === 'bigint' ? v : BigInt(Math.trunc(v));
+    const s = n.toString();
+    const neg = s.startsWith('-');
+    const digits = neg ? s.slice(1) : s;
+    const withCommas = digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return neg ? `-${withCommas}` : withCommas;
+}
+
 /** Parse "1.23k"/"10m"/"999" back to bigint (base units). */
 export function parseBalance(input: string): bigint {
     const str = input.trim().toLowerCase();

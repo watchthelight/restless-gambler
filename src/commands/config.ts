@@ -1,5 +1,6 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionsBitField } from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionsBitField, MessageFlags } from 'discord.js';
 import { getGuildDb } from '../db/connection.js';
+import { getSetting, getSettingNum, setSetting } from '../db/kv.js';
 
 export const data = new SlashCommandBuilder()
   .setName('config')
@@ -44,37 +45,58 @@ export const data = new SlashCommandBuilder()
 
 export async function handleConfig(interaction: ChatInputCommandInteraction) {
   if (!interaction.guildId) {
-    await interaction.reply({ content: 'Guild-only command.' });
+    await interaction.reply({ content: 'Guild-only command.', flags: MessageFlags.Ephemeral });
     return;
   }
   const sub = interaction.options.getSubcommand(true);
   if (sub === 'set') {
     if (!interaction.memberPermissions?.has(PermissionsBitField.Flags.Administrator)) {
-      await interaction.reply({ content: 'Admin only.' });
+      await interaction.reply({ content: 'Admin only.', flags: MessageFlags.Ephemeral });
       return;
     }
     const key = interaction.options.getString('key', true);
     const value = interaction.options.getString('value', true);
     const db = getGuildDb(interaction.guildId);
-    const row = db.prepare('SELECT * FROM guild_settings LIMIT 1').get();
-    const obj: any = row || {};
-    if (key === 'public_results') obj.public_results = value === 'true' ? 1 : 0;
-    else if (key === 'theme') obj.theme = value;
-    else obj[key] = parseInt(value, 10);
-    db.prepare('DELETE FROM guild_settings').run();
-    db.prepare('INSERT INTO guild_settings(max_bet, min_bet, faucet_limit, public_results, theme) VALUES(?,?,?,?,?)').run(
-      obj.max_bet ?? 10000,
-      obj.min_bet ?? 10,
-      obj.faucet_limit ?? 100,
-      obj.public_results ?? 1,
-      obj.theme ?? 'midnight',
-    );
-    await interaction.reply({ content: `Set ${key} to ${value}` });
+    const now = Date.now();
+    const set = (k: string, v: string) => setSetting(db, k, v);
+    if (key === 'public_results') {
+      set('public_results', value === 'true' ? '1' : '0');
+    } else if (key === 'theme') {
+      set('theme', value);
+    } else if (key === 'min_bet') {
+      const v = String(Math.max(0, Math.floor(parseInt(value, 10) || 0)));
+      set('slots.min_bet', v);
+      set('blackjack.min_bet', v);
+    } else if (key === 'max_bet') {
+      const v = String(Math.max(1, Math.floor(parseInt(value, 10) || 1)));
+      set('slots.max_bet', v);
+      set('blackjack.max_bet', v);
+      set('roulette.max_bet', v);
+    } else if (key === 'faucet_limit') {
+      const v = String(Math.max(1, Math.floor(parseInt(value, 10) || 100)));
+      set('faucet_limit', v);
+    } else {
+      await interaction.reply({ content: `Unknown key: ${key}`, flags: MessageFlags.Ephemeral });
+      return;
+    }
+    await interaction.reply({ content: `Set ${key} to ${value}`, flags: MessageFlags.Ephemeral });
   } else if (sub === 'get') {
     const key = interaction.options.getString('key', true);
     const db = getGuildDb(interaction.guildId);
-    const row = db.prepare('SELECT * FROM guild_settings LIMIT 1').get() as any;
-    const value = row ? row[key] : null;
-    await interaction.reply({ content: `${key} = ${value}` });
+    let value: string | number | null = null;
+    if (key === 'min_bet') {
+      const v = getSetting(db, 'slots.min_bet') ?? getSetting(db, 'blackjack.min_bet');
+      value = v ?? '10';
+    } else if (key === 'max_bet') {
+      const v = getSetting(db, 'slots.max_bet') ?? getSetting(db, 'blackjack.max_bet') ?? getSetting(db, 'roulette.max_bet');
+      value = v ?? '1000';
+    } else if (key === 'faucet_limit') {
+      value = getSetting(db, 'faucet_limit') ?? '100';
+    } else if (key === 'public_results') {
+      value = getSetting(db, 'public_results') ?? '1';
+    } else if (key === 'theme') {
+      value = getSetting(db, 'theme') ?? 'midnight';
+    }
+    await interaction.reply({ content: `${key} = ${value}`, flags: MessageFlags.Ephemeral });
   }
 }

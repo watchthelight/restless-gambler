@@ -20,6 +20,8 @@ import { dealInitial, hit as bjHit, stand as bjStand, doubleDown as bjDouble, ha
 import type { Card, BJState } from '../../games/blackjack/types.js';
 import { requireAdmin } from '../../admin/roles.js';
 import { blackjackLimits, validateBet, safeDefer, safeEdit, replyError } from '../../game/config.js';
+import { safeReply } from '../../interactions/reply.js';
+import { withLock } from '../../util/locks.js';
 import { findActiveSession, createSession, updateSession, settleSession, abortSession } from '../../game/blackjack/sessionStore.js';
 
 type SessionRow = {
@@ -337,19 +339,20 @@ export async function execute(i: ChatInputCommandInteraction) {
 export async function handleButton(i: ButtonInteraction) {
   const [prefix, action, g, c, u] = i.customId.split(':');
   if (prefix !== 'blackjack') return;
-  if (!i.guildId || i.guildId !== g) { await i.reply({ content: 'This bot only works in servers.' }); return; }
-  if (i.user.id !== u) { await i.reply({ content: `Only <@${u}> can act on this hand.` }); return; }
+  if (!i.guildId || i.guildId !== g) { await safeReply(i, { content: 'This bot only works in servers.', flags: MessageFlags.Ephemeral }); return; }
+  if (i.user.id !== u) { await safeReply(i, { content: `Only <@${u}> can act on this hand.`, flags: MessageFlags.Ephemeral }); return; }
   // Map buttons to slash actions
   (i as any).options = { getSubcommand: () => action } as any;
-  await safeDefer(i, true);
-  try {
-    await execute(i as any);
-    // If session ended, disable original buttons
-    const active = loadActive(i.guildId, i.user.id);
-    if (!active) {
-      try { await i.message.edit({ components: [] }); } catch { }
+  await withLock(`bj:${i.message?.id || i.id}`, async () => {
+    await safeDefer(i, true);
+    try {
+      await execute(i as any);
+      const active = loadActive(i.guildId!, i.user.id);
+      if (!active) {
+        try { await i.message.edit({ components: [] }); } catch { }
+      }
+    } catch (e: any) {
+      await replyError(i, "ERR-BLACKJACK-BTN", console, { err: String(e) });
     }
-  } catch (e: any) {
-    await replyError(i, "ERR-BLACKJACK-BTN", console, { err: String(e) });
-  }
+  });
 }

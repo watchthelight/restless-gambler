@@ -12,9 +12,7 @@ import { uiExactMode, uiSigFigs } from '../../game/config.js';
 import { renderAmountInline } from '../../util/amountRender.js';
 import { getGuildDb } from '../../db/connection.js';
 import { safeReply } from '../../interactions/reply.js';
-import { userLocks as _userLocks, KeyedMutexes } from '../../util/locks.js';
-
-const messageLocks = new KeyedMutexes();
+import { withLock } from '../../util/locks.js';
 
 export async function handleSlotsButton(interaction: ButtonInteraction) {
   const [prefix, action, userId, betStr] = interaction.customId.split(':');
@@ -37,7 +35,7 @@ export async function handleSlotsButton(interaction: ButtonInteraction) {
     });
     return;
   }
-  await messageLocks.runExclusive(`slots:${interaction.message?.id || interaction.id}`, async () => {
+  await withLock(`slots:${interaction.message?.id || interaction.id}`, async () => {
     await interaction.deferUpdate().catch(() => { });
     const result = spin(bet, defaultConfig, cryptoRNG);
     const net = result.payout - bet;

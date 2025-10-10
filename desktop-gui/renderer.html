@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
+    <title>Restless Gambler — Desktop GUI</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Cantarell, 'Helvetica Neue', Arial, 'Noto Sans', 'Liberation Sans', sans-serif; background: #0f172a; color: #e5e7eb; }
+      .toolbar { display: flex; gap: 10px; padding: 12px; border-bottom: 1px solid #1f2937; background: #111827; position: sticky; top: 0; z-index: 2; }
+      button { background: #1f2937; color: #e5e7eb; border: 1px solid #374151; padding: 8px 14px; border-radius: 8px; cursor: pointer; }
+      button:hover { background: #273447; }
+      .wrap { display: grid; grid-template-columns: 380px 1fr; gap: 12px; padding: 12px; height: calc(100vh - 56px); }
+      .card { background: #0b1220; border: 1px solid #1f2937; border-radius: 12px; padding: 12px; display: flex; flex-direction: column; }
+      .card h2 { margin: 0 0 8px; font-size: 16px; color: #93c5fd; }
+      label { display: block; margin: 8px 0 4px; font-size: 12px; color: #9ca3af; }
+      input, textarea { width: 100%; background: #0b1426; color: #e5e7eb; border: 1px solid #1f2937; border-radius: 8px; padding: 8px; }
+      textarea { min-height: 120px; resize: vertical; }
+      .row { display: flex; gap: 8px; margin-top: 8px; }
+      .status { margin-top: 8px; font-size: 12px; min-height: 18px; }
+      .ok { color: #34d399; }
+      .err { color: #f87171; }
+      #logs { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; background: #0a0f1a; border: 1px solid #1f2937; border-radius: 8px; padding: 10px; overflow: auto; flex: 1; }
+    </style>
+  </head>
+  <body>
+    <div class="toolbar">
+      <button id="btnBuild">Build</button>
+      <button id="btnStart">Start</button>
+      <button id="btnStop">Stop</button>
+      <button id="btnReboot">Reboot</button>
+    </div>
+    <div class="wrap">
+      <div class="card">
+        <h2>Send Message</h2>
+        <label>Guild ID (optional)</label>
+        <input id="guildId" placeholder="123456789012345678" />
+        <label>Channel ID</label>
+        <input id="channelId" placeholder="123456789012345678" />
+        <label>Message</label>
+        <textarea id="message" placeholder="Hello from the bot..."></textarea>
+        <div class="row">
+          <button id="btnSend">Send</button>
+          <button id="btnClear">Clear</button>
+        </div>
+        <div id="status" class="status"></div>
+      </div>
+      <div class="card">
+        <h2>Process Logs</h2>
+        <div id="logs"></div>
+      </div>
+    </div>
+    <script type="module" src="./renderer.js"></script>
+  </body>
+  </html>
+

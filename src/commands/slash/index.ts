@@ -1,0 +1,87 @@
+import { ChatInputCommandInteraction, SlashCommandBuilder, SlashCommandOptionsOnlyBuilder, SlashCommandSubcommandsOnlyBuilder } from 'discord.js';
+import * as Canary from './canary.js';
+import * as Help from './help.js';
+import * as SlotsCmd from '../../games/slots/commands.js';
+import * as RouletteCmd from '../../games/roulette/commands.js';
+import * as BlackjackSlash from './blackjack.js';
+import { commands as EconCommands, handleEconomy } from '../economy.js';
+import { data as ConfigCommand, handleConfig } from '../config.js';
+import * as HoldemCmds from '../../games/holdem/commands.js';
+import * as DevCmd from '../dev.js';
+import * as AdminCmd from '../admin/index.js';
+import { requireAdmin } from '../../admin/roles.js';
+import * as AdminRepair from './admin-repair.js';
+import * as Ping from './ping.js';
+import * as Theme from './theme.js';
+
+type Builder = SlashCommandBuilder | SlashCommandOptionsOnlyBuilder | SlashCommandSubcommandsOnlyBuilder;
+type Slash = { name: string; data: Builder; run: (i: ChatInputCommandInteraction) => Promise<void> };
+
+// Minimal help that responds immediately, no images
+const HelpSlash: Slash = { name: Help.data.name, data: Help.data as Builder, run: Help.run };
+
+// Dev demo (flat command) -> delegates to /dev demo
+const DevDemo: Slash = {
+  name: 'dev-demo',
+  data: new SlashCommandBuilder()
+    .setName('dev-demo')
+    .setDescription('Render a demo card (admin only)')
+    .addStringOption((o) => o.setName('component').setDescription('notice|list|wallet|slots|roulette|blackjack').setRequired(true)),
+  run: async (i) => {
+    await requireAdmin(i);
+    // Transform to /dev demo
+    (i as any).options.getSubcommand = () => 'demo';
+    await DevCmd.execute(i as any);
+  },
+};
+
+// Admin reboot (flat command) -> delegates to Admin button flow
+const AdminReboot: Slash = {
+  name: 'admin-reboot',
+  data: new SlashCommandBuilder()
+    .setName('admin-reboot')
+    .setDescription('Reboot the bot (admin only)'),
+  run: async (i) => {
+    // mimic subcommand call
+    (i as any).options.getSubcommand = () => 'reboot';
+    await AdminCmd.execute(i as any);
+  },
+};
+
+export function getSlashCommands(): Slash[] {
+  const out: Slash[] = [];
+  const add = (s: Slash) => {
+    if (out.find((x) => x.name === s.name)) return; // skip duplicates, keep first
+    out.push(s);
+  };
+
+  add({ name: Canary.data.name, data: Canary.data as Builder, run: Canary.run });
+  add(HelpSlash);
+  add(DevDemo);
+  add(AdminReboot);
+  add({ name: AdminRepair.data.name, data: AdminRepair.data as Builder, run: AdminRepair.run });
+  add({ name: Ping.data.name, data: Ping.data as Builder, run: Ping.run });
+  add({ name: Theme.data.name, data: Theme.data as Builder, run: Theme.execute as any });
+  // Economy set (skip built-in help to avoid duplicate)
+  for (const cmd of EconCommands) {
+    if (cmd.name === 'help') continue;
+    add({ name: cmd.name, data: cmd as Builder, run: handleEconomy as any });
+  }
+  // Config
+  add({ name: ConfigCommand.name, data: ConfigCommand as Builder, run: handleConfig as any });
+  // Games
+  add({ name: SlotsCmd.data.name, data: SlotsCmd.data as Builder, run: SlotsCmd.execute as any });
+  add({ name: RouletteCmd.data.name, data: RouletteCmd.data as Builder, run: RouletteCmd.execute as any });
+  add({ name: BlackjackSlash.data.name, data: BlackjackSlash.data as Builder, run: BlackjackSlash.execute as any });
+  add({ name: HoldemCmds.data.name, data: HoldemCmds.data as Builder, run: HoldemCmds.execute as any });
+  // Admin original (subcommands) and Dev original (names differ from flat ones)
+  add({ name: DevCmd.data.name, data: DevCmd.data as Builder, run: DevCmd.execute as any });
+  add({ name: AdminCmd.data.name, data: AdminCmd.data as Builder, run: AdminCmd.execute as any });
+  return out;
+}
+
+// Single source of truth for command data
+export function allCommands(): (Builder)[] {
+  const cmds = getSlashCommands();
+  return cmds.map((c) => c.data);
+}

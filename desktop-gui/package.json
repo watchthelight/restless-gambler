@@ -1,0 +1,14 @@
+{
+  "name": "restless-gambler-desktop-gui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "electron": "^31.3.0"
+  }
+}
+

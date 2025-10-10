@@ -1,0 +1,212 @@
+﻿.
+├── .env
+├── .env.example
+├── .eslintrc.cjs
+├── .prettierrc
+├── admin.db
+├── babel.config.cjs
+├── check_tables.js
+├── data.db
+├── docker-compose.yml
+├── Dockerfile
+├── filetree.txt
+├── jest.config.cjs
+├── jest.setup.js
+├── kill-node-tree.ps1
+├── logpull.ps1
+├── package-lock.json
+├── package.json
+├── README.md
+├── Rebuild-And-Run.cmd
+├── rebuild.cmd
+├── refresh-all.ps1
+├── Start.ps1
+├── startCLI.cmd
+├── startGUI.cmd
+├── tsconfig.json
+├── .vscode
+│   └── settings.json
+├── backups
+│   ├── admin-20251008-112902.db
+│   ├── admin-20251008-113110.db
+├── data
+│   ├── .gitkeep
+│   ├── admin.db
+│   ├── admin_global.db
+│   ├── bot.sqlite
+│   ├── archive
+│   │   ├── data-legacy-2025-10-08T15-43-08-810Z.db
+│   │   ├── data-legacy-2025-10-08T15-44-12-856Z.db
+│   │   ├── data-legacy-2025-10-08T15-58-02-756Z.db
+│   │   ├── data-legacy-2025-10-08T16-12-59-360Z.db
+│   │   ├── data-legacy-2025-10-08T23-02-51-975Z.db
+│   │   └── data-legacy-2025-10-09T00-44-41-275Z.db
+│   ├── guilds
+│   │   ├── 111111111111111111.db
+│   │   ├── 1285395569618980926.db
+│   │   └── 1414225727179591712.db
+│   └── test-guilds
+│       ├── 111111111111111111.db
+│       └── 222222222222222222.db
+├── desktop-gui
+│   ├── config.json
+│   ├── main.js
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── preload.js
+│   ├── README.md
+│   ├── renderer.html
+│   └── renderer.js
+├── dist
+│   ├── index.d.mts
+│   ├── index.d.ts
+│   ├── index.js
+│   ├── index.js.map
+│   ├── index.mjs
+│   └── index.mjs.map
+├── logs
+│   └── app.ndjson
+├── node_modules
+│   └── (excluded)
+├── scripts
+│   ├── backup.ts
+│   └── list-commands.ts
+├── src
+│   ├── client.ts
+│   ├── index.ts
+│   ├── register.ts
+│   ├── admin
+│   │   ├── roles.ts
+│   │   └── tests
+│   │       └── roles.test.ts
+│   ├── cards
+│   │   ├── Card.ts
+│   │   ├── images.ts
+│   │   └── unicode.ts
+│   ├── cli
+│   │   ├── logger.ts
+│   │   ├── theme.ts
+│   │   └── ui.ts
+│   ├── commands
+│   │   ├── config.ts
+│   │   ├── dev.ts
+│   │   ├── economy.ts
+│   │   ├── index.ts
+│   │   ├── registry.ts
+│   │   ├── admin
+│   │   │   ├── index.ts
+│   │   │   └── tests
+│   │   │       └── reboot.test.ts
+│   │   └── slash
+│   │       ├── admin-repair.ts
+│   │       ├── blackjack.ts
+│   │       ├── canary.ts
+│   │       ├── help.ts
+│   │       ├── index.ts
+│   │       ├── ping.ts
+│   │       └── theme.ts
+│   ├── config
+│   │   ├── flags.ts
+│   │   └── runtime.ts
+│   ├── db
+│   │   ├── columns.ts
+│   │   ├── connection.ts
+│   │   ├── ensure.ts
+│   │   ├── legacy-migrate.ts
+│   │   ├── migrate.ts
+│   │   └── schema.sql
+│   │   ├── migrations
+│   │   │   ├── admin_global.sql
+│   │   │   ├── blackjack.ts
+│   │   │   ├── guild.sql
+│   │   │   ├── global
+│   │   │   │   └── 001_admin_indices.sql
+│   │   │   └── guild
+│   │   │       ├── 001_add_indices.sql
+│   │   │       └── 002_add_cooldowns.sql
+│   ├── economy
+│   │   ├── cooldowns.ts
+│   │   ├── currency.ts
+│   │   ├── faucet.ts
+│   │   ├── leaderboard.ts
+│   │   └── wallet.ts
+│   │   └── tests
+│   │       └── currency.test.ts
+│   ├── games
+│   │   ├── blackjack
+│   │   │   ├── commands.ts
+│   │   │   ├── engine.ts
+│   │   │   └── types.ts
+│   │   │   └── tests
+│   │   │       ├── engine.payout.test.ts
+│   │   │       └── engine.test.ts
+│   │   ├── holdem
+│   │   │   ├── commands.ts
+│   │   │   ├── engine.ts
+│   │   │   ├── evaluator.ts
+│   │   │   ├── table.ts
+│   │   │   └── types.ts
+│   │   │   └── tests
+│   │   │       └── evaluator.test.ts
+│   │   ├── roulette
+│   │   │   ├── commands.ts
+│   │   │   ├── engine.ts
+│   │   │   └── types.ts
+│   │   │   └── tests
+│   │   │       └── engine.test.ts
+│   │   ├── slots
+│   │   │   ├── commands.ts
+│   │   │   ├── engine.ts
+│   │   │   └── types.ts
+│   │   │   └── tests
+│   │   │       └── engine.test.ts
+│   ├── interactions
+│   │   ├── router.ts
+│   │   ├── buttons
+│   │   │   ├── econ.ts
+│   │   │   └── slots.ts
+│   │   └── selects
+│   │       └── slots.ts
+│   ├── tools
+│   │   ├── commandSync.ts
+│   │   ├── purge-commands.ts
+│   │   └── purge.ts
+│   ├── types
+│   │   ├── ambient.d.ts
+│   │   └── canvas.d.ts
+│   ├── ui
+│   │   ├── cardFactory.ts
+│   │   ├── cardsDisplay.ts
+│   │   ├── embeds.ts
+│   │   ├── fonts.ts
+│   │   ├── icons.ts
+│   │   ├── outcome.ts
+│   │   ├── theme.ts
+│   │   └── tests
+│   │       └── cardFactory.test.ts
+│   ├── util
+│   │   ├── embeds.ts
+│   │   ├── errors.ts
+│   │   ├── interactions.ts
+│   │   ├── locks.ts
+│   │   ├── restart.ts
+│   │   ├── rng.ts
+│   │   ├── userMeta.ts
+│   │   └── verbose.ts
+├── tests
+│   ├── cards.handvalue.test.js
+│   ├── cards.handvalue.test.ts
+│   ├── cards.unicode.test.js
+│   ├── cards.unicode.test.ts
+│   ├── perGuild.test.js
+│   ├── perGuild.test.ts
+│   ├── ping.test.js
+│   ├── ping.test.ts
+│   ├── theme.command.test.js
+│   ├── theme.command.test.ts
+│   └── integration
+│       ├── wallet.test.js
+│       ├── wallet.test.js.map
+│       ├── wallet.test.ts
+├── tools
+│   └── pack-release.ps1

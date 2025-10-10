@@ -5,3 +5,13 @@
 - Null-safe config access; /config now reads/writes KV and sets game bet limits appropriately
 - Verified: /slots, roulette, blackjack buttons no longer throw ERR-COMPONENT; /config set max_bet works
 
+2025-10-10 — Blackjack lifecycle fix + Play Again
+- Sessions now end immediately on terminal outcomes (win/loss/push/bust/blackjack/auto-stand/cancel) before rendering results
+- Added per-session lock to prevent races between auto-stand and clicks
+- Final result cards disable action buttons and include a “Play Again” button that restarts with the same bet
+- /blackjack start no longer incorrectly reports an active hand after a win
+
+2025-10-10 — Gamble card idempotent + exact balance inline
+- Reworked /gamble to use defer+editReply; eliminated InteractionAlreadyReplied errors
+- Removed “Exact/Copy” buttons on /gamble
+- Wallet card now shows the pretty number and a secondary `exact: 1,234,567` line

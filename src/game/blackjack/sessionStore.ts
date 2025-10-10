@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { getGuildDb } from '../../db/connection.js';
 
 type Col = { name: string };
 function cols(db: Database.Database, table: string): Set<string> {
@@ -143,4 +144,12 @@ export function settleSession(db: Database.Database, id: string) {
 export function abortSession(db: Database.Database, id: string) {
     const now = Math.floor(Date.now() / 1000);
     db.prepare(`UPDATE blackjack_sessions SET status = 'aborted', updated_at = ? WHERE id = ?`).run(now, id);
+}
+
+// Remove any active/inactive session rows for a user in a guild
+export function endSession(guildId: string, userId: string) {
+    const db = getGuildDb(guildId);
+    try {
+        db.prepare(`DELETE FROM blackjack_sessions WHERE guild_id = ? AND user_id = ?`).run(guildId, userId);
+    } catch {}
 }

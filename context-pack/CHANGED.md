@@ -252,3 +252,7 @@ Verified both roles can execute commands; others receive the standard dev-only m
    /theme set theme: cherry
    Expect no "no such table" errors; first run may log migrate_guild applies.
 3) Kill and restart; migrations should log no new applies; commands should still work.
+2025-10-10 — Remove Exact/Copy buttons; Blackjack Play Again → new message
+- Economy cards now show pretty value plus secondary `exact: 1,234,567` line. Buttons removed.
+- Eliminated InteractionAlreadyReplied by using defer+editReply across econ commands.
+- Blackjack “Play Again” now acknowledges the button and posts a new message with a fresh hand; only original player can use it.

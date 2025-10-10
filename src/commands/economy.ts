@@ -57,79 +57,39 @@ export async function handleEconomy(interaction: ChatInputCommandInteraction) {
   switch (interaction.commandName) {
     case 'balance': {
       if (!interaction.guildId) { await interaction.reply({ content: 'This bot only works in servers.' }); break; }
+      await safeDefer(interaction, { ephemeral: false });
       const bal = getBalance(interaction.guildId, interaction.user.id);
-      const theme = getGuildTheme(interaction.guildId);
-      const db = getGuildDb(interaction.guildId);
-      const mode = uiExactMode(db, "guild");
-      const sig = uiSigFigs(db);
-      let balanceText: string;
-      let components: any[] = [];
-      if (mode === "inline") {
-        balanceText = renderAmountInline(bal, sig);
-      } else if (mode === "on_click") {
-        const { text, row } = componentsForExact(bal, sig);
-        balanceText = text;
-        components = [row];
-      } else {
-        balanceText = formatBolts(bal);
-      }
-      const card = await generateCard({ layout: 'Wallet', theme, payload: { balance: bal, title: 'Wallet', subtitle: `Current balance in ${CURRENCY_NAME}` } });
-      const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-      const embed = themedEmbed(theme, 'Wallet', `Your balance: ${balanceText}`).setImage(`attachment://${card.filename}`);
-      await interaction.reply({ embeds: [embed], files: [file], components });
+      const pretty = formatBalance(bal);
+      const exact = formatExact(bal);
+      const embed = walletEmbed({ title: 'Wallet', headline: 'Your balance:', pretty, exact });
+      await interaction.editReply({ embeds: [embed], components: [] });
       break;
     }
     case 'daily': {
       if (!interaction.guildId) { await interaction.reply({ content: 'This bot only works in servers.' }); break; }
+      await safeDefer(interaction, { ephemeral: false });
       try {
         const bal = await claimDaily(interaction.guildId, interaction.user.id);
-        const theme = getGuildTheme(interaction.guildId);
-        const db = getGuildDb(interaction.guildId);
-        const mode = uiExactMode(db, "guild");
-        const sig = uiSigFigs(db);
-        let balanceText: string;
-        let components: any[] = [];
-        if (mode === "inline") {
-          balanceText = renderAmountInline(bal, sig);
-        } else if (mode === "on_click") {
-          const { text, row } = componentsForExact(bal, sig);
-          balanceText = text;
-          components = [row];
-        } else {
-          balanceText = formatBolts(bal);
-        }
-        const card = await generateCard({ layout: 'Wallet', theme, payload: { balance: bal, title: 'Daily Bonus', subtitle: `You claimed ${formatBolts(250)} (base). Streak bonus applied if eligible.` } });
-        const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-        const embed = themedEmbed(theme, 'Daily', `You claimed daily ${CURRENCY_NAME}. New balance: ${balanceText}`).setImage(`attachment://${card.filename}`);
-        console.log(JSON.stringify({ msg: 'econ', event: 'daily_claim', guildId: interaction.guildId, userId: interaction.user.id, granted: 250 }));
-        await interaction.reply({ embeds: [embed], files: [file], components });
+        const pretty = formatBalance(bal);
+        const exact = formatExact(bal);
+        const embed = walletEmbed({ title: 'Daily', headline: 'Claimed daily bonus. New balance:', pretty, exact });
+        console.log(JSON.stringify({ msg: 'econ', event: 'daily_claim', guildId: interaction.guildId, userId: interaction.user.id }));
+        await interaction.editReply({ embeds: [embed], components: [] });
       } catch (e: any) {
-        const theme = getGuildTheme(interaction.guildId);
-        const card = await generateCard({ layout: 'Notice', theme, payload: { title: 'Cooldown', message: e.message } });
-        const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-        const embed = themedEmbed(theme, 'Daily', e.message.slice(0, 120)).setImage(`attachment://${card.filename}`);
-        await interaction.reply({ embeds: [embed], files: [file] });
+        await interaction.editReply({ content: e.message || 'Daily is on cooldown.' });
       }
       break;
     }
     case 'faucet': {
       if (!interaction.guildId) { await interaction.reply({ content: 'This bot only works in servers.' }); break; }
+      await safeDefer(interaction, { ephemeral: false });
       const amount = interaction.options.getInteger('amount') ?? 100;
       const bal = await faucet(interaction.guildId, interaction.user.id, amount);
-      const theme = getGuildTheme(interaction.guildId);
-      const db = getGuildDb(interaction.guildId);
-      const mode = uiExactMode(db, "guild");
-      const sig = uiSigFigs(db);
-      let amountText: string;
-      if (mode === "inline") {
-        amountText = renderAmountInline(amount, sig);
-      } else {
-        amountText = formatBolts(amount);
-      }
-      const card = await generateCard({ layout: 'Wallet', theme, payload: { balance: bal, title: 'Faucet', subtitle: `Granted ${amountText} (default limit ${formatBolts(100)}).` } });
-      const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-      const embed = themedEmbed(theme, 'Faucet', `Granted ${amountText}`).setImage(`attachment://${card.filename}`);
-      await interaction.reply({ embeds: [embed], files: [file] });
+      const pretty = formatBalance(bal);
+      const exact = formatExact(bal);
+      const headline = `Faucet +${formatBolts(amount)} 🪙. New balance:`;
+      const embed = walletEmbed({ title: 'Faucet', headline, pretty, exact });
+      await interaction.editReply({ embeds: [embed], components: [] });
       break;
     }
     case 'give': {
@@ -137,49 +97,34 @@ export async function handleEconomy(interaction: ChatInputCommandInteraction) {
       if (!interaction.guildId) { await interaction.reply({ content: 'This bot only works in servers.' }); break; }
       const user = interaction.options.getUser('user', true);
       const amount = interaction.options.getInteger('amount', true);
+      await safeDefer(interaction, { ephemeral: false });
       try {
         const { from } = await transfer(interaction.guildId, interaction.user.id, user.id, amount);
-        const theme = getGuildTheme(interaction.guildId);
-        const db = getGuildDb(interaction.guildId);
-        const mode = uiExactMode(db, "guild");
-        const sig = uiSigFigs(db);
-        let amountText: string;
-        if (mode === "inline") {
-          amountText = renderAmountInline(amount, sig);
-        } else {
-          amountText = formatBolts(amount);
-        }
-        const card = await generateCard({ layout: 'Wallet', theme, payload: { balance: from, title: 'Transfer', subtitle: `Sent ${amountText} to ${user.tag}` } });
-        const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-        const embed = themedEmbed(theme, 'Give', `Gave ${amountText} to ${user.tag}`).setImage(`attachment://${card.filename}`);
+        const pretty = formatBalance(from);
+        const exact = formatExact(from);
+        const headline = `Gave ${formatBolts(amount)} to ${user.tag}. New balance:`;
+        const embed = walletEmbed({ title: 'Give', headline, pretty, exact });
         console.log(JSON.stringify({ msg: 'econ', event: 'transfer', from: interaction.user.id, to: user.id, amount }));
-        await interaction.reply({ embeds: [embed], files: [file] });
+        await interaction.editReply({ embeds: [embed], components: [] });
       } catch (e: any) {
-        const theme = getGuildTheme(interaction.guildId);
-        const card = await generateCard({ layout: 'Notice', theme, payload: { title: 'Give Failed', message: e.message } });
-        const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-        const embed = themedEmbed(theme, 'Give', e.message.slice(0, 120)).setImage(`attachment://${card.filename}`);
-        await interaction.reply({ embeds: [embed], files: [file] });
+        await interaction.editReply({ content: e.message || 'Give failed.' });
       }
       break;
     }
     case 'transfer': {
       if (!interaction.guildId) { await interaction.reply({ content: 'This bot only works in servers.' }); break; }
+      await safeDefer(interaction, { ephemeral: false });
       const user = interaction.options.getUser('user', true);
       const amount = interaction.options.getInteger('amount', true);
       try {
         const { from } = await transfer(interaction.guildId, interaction.user.id, user.id, amount);
-        const theme = getGuildTheme(interaction.guildId);
-        const card = await generateCard({ layout: 'Wallet', theme, payload: { balance: from, title: 'Transfer', subtitle: `Sent ${formatBolts(amount)} to ${user.tag}` } });
-        const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-        const embed = themedEmbed(theme, 'Transfer', `Sent ${formatBolts(amount)} to ${user.tag}`).setImage(`attachment://${card.filename}`);
-        await interaction.reply({ embeds: [embed], files: [file] });
+        const pretty = formatBalance(from);
+        const exact = formatExact(from);
+        const headline = `Sent ${formatBolts(amount)} to ${user.tag}. New balance:`;
+        const embed = walletEmbed({ title: 'Transfer', headline, pretty, exact });
+        await interaction.editReply({ embeds: [embed], components: [] });
       } catch (e: any) {
-        const theme = getGuildTheme(interaction.guildId);
-        const card = await generateCard({ layout: 'Notice', theme, payload: { title: 'Transfer Failed', message: e.message } });
-        const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-        const embed = themedEmbed(theme, 'Transfer', e.message.slice(0, 120)).setImage(`attachment://${card.filename}`);
-        await interaction.reply({ embeds: [embed], files: [file] });
+        await interaction.editReply({ content: e.message || 'Transfer failed.' });
       }
       break;
     }

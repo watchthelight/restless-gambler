@@ -16,6 +16,9 @@ import { runAdminAddNormal, runAdminAddSuper } from './add.js';
 import { formatBolts } from '../../economy/currency.js';
 import { setKV, uiExactMode, uiSigFigs } from '../../game/config.js';
 import { renderAmountInline, componentsForExact } from '../../util/amountRender.js';
+import { walletEmbed } from '../shared/walletView.js';
+import { formatBalance, formatExact } from '../../util/formatBalance.js';
+import { safeDefer } from '../../interactions/reply.js';
 import { isTestEnv } from '../../util/env.js';
 import log from '../../cli/logger.js';
 
@@ -124,29 +127,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const { getUserMeta } = await import('../../util/userMeta.js');
     await getUserMeta(interaction.client, interaction.guildId!, user.id);
     const newBal = await adjustBalance(interaction.guildId!, user.id, amount, 'admin:give');
-    const theme = getGuildTheme(interaction.guildId);
-    const ctx = { guildDb: getGuildDb(interaction.guildId!) };
-    const mode = uiExactMode(ctx.guildDb, "guild");
-    const sig = uiSigFigs(ctx.guildDb);
-    let amountText: string;
-    let balanceText: string;
-    if (mode === "inline") {
-      amountText = renderAmountInline(amount, sig);
-      balanceText = renderAmountInline(newBal, sig);
-    } else if (mode === "on_click") {
-      const { text: at, row: ar } = componentsForExact(amount, sig);
-      const { text: bt, row: br } = componentsForExact(newBal, sig);
-      amountText = at;
-      balanceText = bt;
-      // For simplicity, use the balance row, but since it's one message, perhaps combine or use separate.
-      // For now, just use text.
-    } else {
-      amountText = formatBolts(amount);
-      balanceText = formatBolts(newBal);
-    }
-    const embed = themedEmbed(theme, 'Funds Added', `${user.tag} +${amountText}`).setDescription(`New balance: ${balanceText}`);
+    await safeDefer(interaction);
+    const pretty = formatBalance(newBal);
+    const exact = formatExact(newBal);
+    const embed = walletEmbed({ title: 'Funds Added', headline: `${user.tag} +${formatBolts(amount)}. New balance:`, pretty, exact });
     console.log(JSON.stringify({ msg: 'admin_action', action: 'give', target: user.id, amount: amount, admin: interaction.user.id }));
-    await interaction.reply({ embeds: [embed] });
+    await interaction.editReply({ embeds: [embed], components: [] });
   }
   else if (sub === 'super-add') {
     return runAdminAddSuper(interaction, { adminDb: getGlobalAdminDb(), guildDb: getGuildDb(interaction.guildId!), log });
@@ -318,27 +304,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await getUserMeta(interaction.client, interaction.guildId!, user.id);
     const newBal = await adjustBalance(interaction.guildId!, user.id, delta, 'admin:take');
     const actualTaken = -delta;
-    const theme = getGuildTheme(interaction.guildId);
-    const ctx = { guildDb: getGuildDb(interaction.guildId!) };
-    const mode = uiExactMode(ctx.guildDb, "guild");
-    const sig = uiSigFigs(ctx.guildDb);
-    let takenText: string;
-    let balanceText: string;
-    if (mode === "inline") {
-      takenText = renderAmountInline(actualTaken, sig);
-      balanceText = renderAmountInline(newBal, sig);
-    } else if (mode === "on_click") {
-      const { text: tt, row: tr } = componentsForExact(actualTaken, sig);
-      const { text: bt, row: br } = componentsForExact(newBal, sig);
-      takenText = tt;
-      balanceText = bt;
-    } else {
-      takenText = formatBolts(actualTaken);
-      balanceText = formatBolts(newBal);
-    }
-    const embed = themedEmbed(theme, 'Funds Removed', `${user.tag} -${takenText}`).setDescription(`New balance: ${balanceText}`);
+    await safeDefer(interaction);
+    const pretty = formatBalance(newBal);
+    const exact = formatExact(newBal);
+    const takenText = formatBolts(actualTaken);
+    const embed = walletEmbed({ title: 'Funds Removed', headline: `${user.tag} -${takenText}. New balance:`, pretty, exact });
     console.log(JSON.stringify({ msg: 'admin_action', action: 'take', target: user.id, amount: actualTaken, admin: interaction.user.id }));
-    await interaction.reply({ embeds: [embed] });
+    await interaction.editReply({ embeds: [embed], components: [] });
   }
   else if (sub === 'reset') {
     await requireAdmin(interaction);
@@ -354,22 +326,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       // no dedicated wins/losses columns; leave game history intact
     });
     tx();
-    const theme = getGuildTheme(interaction.guildId);
-    const ctx = { guildDb: getGuildDb(interaction.guildId!) };
-    const mode = uiExactMode(ctx.guildDb, "guild");
-    const sig = uiSigFigs(ctx.guildDb);
-    let balanceText: string;
-    if (mode === "inline") {
-      balanceText = renderAmountInline(0, sig);
-    } else if (mode === "on_click") {
-      const { text: bt, row: br } = componentsForExact(0, sig);
-      balanceText = bt;
-    } else {
-      balanceText = formatBolts(0);
-    }
-    const embed = themedEmbed(theme, 'Account Reset', `${user.tag} reset to ${balanceText} balance`);
+    await safeDefer(interaction);
+    const pretty = formatBalance(0);
+    const exact = formatExact(0);
+    const embed = walletEmbed({ title: 'Account Reset', headline: `${user.tag} reset. New balance:`, pretty, exact });
     console.log(JSON.stringify({ msg: 'admin_action', action: 'reset', target: user.id, amount: 0, admin: interaction.user.id }));
-    await interaction.reply({ embeds: [embed] });
+    await interaction.editReply({ embeds: [embed], components: [] });
   }
   else if (sub === 'refresh-status') {
     await requireAdmin(interaction);

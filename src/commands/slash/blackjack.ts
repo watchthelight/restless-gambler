@@ -478,10 +478,13 @@ export async function handleAgainButton(i: ButtonInteraction) {
   const [prefix, action, g, u, betStr] = i.customId.split(':');
   if (prefix !== 'bj' || action !== 'again') return;
   if (!i.guildId || i.guildId !== g) return;
-  if (i.user.id !== u) return;
+  if (i.user.id !== u) {
+    await safeReply(i, { content: 'Only the original player can start a new hand from this card.', flags: MessageFlags.Ephemeral });
+    return;
+  }
   const bet = Number(betStr);
   await withLock(`bj:${g}:${u}`, async () => {
-    await i.deferUpdate().catch(() => {});
+    // Router already deferred this button; do not defer again.
     const db = getGuildDb(i.guildId!);
     // Ensure no active session exists
     if (findActiveSession(db, i.guildId!, i.user.id)) return;
@@ -502,7 +505,7 @@ export async function handleAgainButton(i: ButtonInteraction) {
     const state = dealInitial(bet);
     (state as any).channelId = i.channelId;
     saveSession(i.guildId!, i.user.id, state);
-    // Render initial hand in-place
+    // Render initial hand as a NEW message
     const theme = getGuildTheme(i.guildId);
     const ph = state.playerHands[state.activeIndex]?.cards || state.playerHands[0].cards;
     const toCard = (c: any) => ({ suit: c.s as any, rank: (c.r as any) });
@@ -519,7 +522,7 @@ export async function handleAgainButton(i: ButtonInteraction) {
       );
     const payload: any = { embeds: [embed], components: [row] };
     if (handRender.kind === 'image') payload.files = [handRender.attachment];
-    await i.editReply(payload).catch(() => {});
+    await i.followUp(payload).catch(() => {});
     ensureTimeout(i.guildId!, i.channelId, i.user.id, i.client);
   });
 }

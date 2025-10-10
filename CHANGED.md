@@ -15,3 +15,7 @@
 - Reworked /gamble to use defer+editReply; eliminated InteractionAlreadyReplied errors
 - Removed “Exact/Copy” buttons on /gamble
 - Wallet card now shows the pretty number and a secondary `exact: 1,234,567` line
+2025-10-10 — Remove Exact/Copy buttons; Blackjack Play Again → new message
+- Economy cards now show pretty value plus secondary `exact: 1,234,567` line. Buttons removed.
+- Eliminated InteractionAlreadyReplied by using defer+editReply across econ commands.
+- Blackjack “Play Again” now acknowledges the button and posts a new message with a fresh hand; only original player can use it.

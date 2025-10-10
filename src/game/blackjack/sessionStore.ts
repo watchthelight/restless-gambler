@@ -46,6 +46,59 @@ export function ensureBlackjackSessionsSchema(db: Database.Database, log = conso
         db.exec(`CREATE INDEX IF NOT EXISTS idx_bj_sessions_guild_user ON blackjack_sessions(guild_id, user_id)`);
         log.info?.({ msg: "bj_schema_added_guild_id" });
     }
+    // Add started_at if missing
+    if (!names.has("started_at")) {
+        db.exec(`ALTER TABLE blackjack_sessions ADD COLUMN started_at INTEGER NOT NULL DEFAULT 0`);
+        // Backfill with created_at or createdAt if available
+        if (names.has("created_at")) {
+            db.exec(`UPDATE blackjack_sessions SET started_at = created_at WHERE started_at = 0`);
+        } else if (names.has("createdAt")) {
+            db.exec(`UPDATE blackjack_sessions SET started_at = createdAt WHERE started_at = 0`);
+        }
+        log.info?.({ msg: "bj_schema_added_started_at" });
+    }
+    // Add updated_at if missing
+    if (!names.has("updated_at")) {
+        db.exec(`ALTER TABLE blackjack_sessions ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0`);
+        // Backfill with updatedAt if available
+        if (names.has("updatedAt")) {
+            db.exec(`UPDATE blackjack_sessions SET updated_at = updatedAt WHERE updated_at = 0`);
+        } else if (names.has("started_at")) {
+            db.exec(`UPDATE blackjack_sessions SET updated_at = started_at WHERE updated_at = 0`);
+        }
+        log.info?.({ msg: "bj_schema_added_updated_at" });
+    }
+
+    // Fix ID column type mismatch (legacy tables have INTEGER, new tables have TEXT)
+    const idCol = db.prepare(`PRAGMA table_info(blackjack_sessions)`).all() as any[];
+    const idInfo = idCol.find((c: any) => c.name === 'id');
+    if (idInfo && idInfo.type === 'INTEGER') {
+        log.info?.({ msg: "bj_schema_migrating_id_column", note: "Converting INTEGER id to TEXT UUID" });
+        try {
+            // Delete all old sessions (safer than trying to migrate with UUID generation)
+            // Old sessions are likely stale anyway
+            db.exec(`DELETE FROM blackjack_sessions WHERE 1=1;`);
+
+            // Recreate the table with correct schema
+            db.exec(`DROP TABLE IF EXISTS blackjack_sessions;`);
+            db.exec(`
+                CREATE TABLE blackjack_sessions(
+                    id TEXT PRIMARY KEY,
+                    guild_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    state_json TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    started_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_bj_sessions_guild_user ON blackjack_sessions(guild_id, user_id);
+                CREATE INDEX IF NOT EXISTS idx_bj_sessions_status ON blackjack_sessions(status);
+            `);
+            log.info?.({ msg: "bj_schema_id_migration_complete", note: "Old sessions cleared" });
+        } catch (e: any) {
+            log.error?.({ msg: "bj_schema_id_migration_failed", error: String(e) });
+        }
+    }
 }
 
 export type BjSession = {

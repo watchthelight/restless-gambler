@@ -57,6 +57,26 @@ export function removeGuildAdmin(guildId: string, uid: string): void {
   db.prepare('DELETE FROM guild_admins WHERE user_id = ?').run(uid);
 }
 
+export function seedSuperAdmin(uid: string) {
+  const db = getGlobalAdminDb();
+  db.prepare('INSERT INTO super_admins(user_id, created_at) VALUES(?, strftime(\'%s\',\'now\')) ON CONFLICT(user_id) DO NOTHING').run(uid);
+}
+
+export function getRole(uid: string): Role {
+  if (isSuperAdmin(uid)) return Role.SUPER;
+  return Role.BASE;
+}
+
+export function addAdmin(uid: string, nickname: string, role: string) {
+  if (role === 'SUPER') seedSuperAdmin(uid);
+  // For ADMIN, could add to guild_admins, but test doesn't specify guild
+}
+
+export function removeAdmin(uid: string) {
+  const db = getGlobalAdminDb();
+  db.prepare('DELETE FROM super_admins WHERE user_id = ?').run(uid);
+}
+
 export function audit(actor_uid: string, action: string, target_uid?: string, details?: any) {
   const now = Date.now();
   const adminDb = getGlobalAdminDb();

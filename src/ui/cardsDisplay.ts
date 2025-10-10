@@ -23,19 +23,21 @@ export function getCardsStyle(guildId: string, override?: 'unicode' | 'image'): 
   const db = getGuildDb(guildId);
   try {
     const row = db.prepare('SELECT cards_style FROM guild_settings LIMIT 1').get() as { cards_style?: string } | undefined;
-    const v = (row?.cards_style || 'unicode').toLowerCase();
+    // Default to 'image' for large, clear cards
+    const v = (row?.cards_style || 'image').toLowerCase();
     return v === 'image' ? 'image' : 'unicode';
-  } catch { return 'unicode'; }
+  } catch { return 'image'; }
 }
 
 export async function renderHands(guildId: string, player: Card[], dealer: Card[], revealDealer: boolean, override?: 'unicode' | 'image'): Promise<HandRender> {
   const style = getCardsStyle(guildId, override);
   if (style === 'image') {
     try {
-      const deal = revealDealer ? dealer : [dealer[0]];
-      const att = await renderHandsImage(player, deal);
+      // Pass the full dealer hand and let renderHandsImage handle hiding
+      const att = await renderHandsImage(player, dealer, !revealDealer);
       return { kind: 'image', attachment: att };
-    } catch {
+    } catch (e) {
+      console.error('Failed to render card images, falling back to unicode:', e);
       // fallback to unicode
     }
   }

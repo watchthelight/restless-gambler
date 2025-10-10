@@ -1,6 +1,14 @@
-import { beforeAll, describe, expect, test } from '@jest/globals';
+import { beforeAll, describe, expect, jest, test } from '@jest/globals';
 import fs from 'node:fs';
 import path from 'node:path';
+
+jest.mock('../src/cli/ui', () => ({
+  ui: {
+    bar: () => ({ tick: () => { }, stop: () => { } }),
+    say: () => { },
+    timed: async (label: string, fn: () => Promise<any>) => fn(),
+  },
+}));
 
 describe('per-guild databases', () => {
   const baseDir = path.resolve('./data/test-guilds');
@@ -11,7 +19,7 @@ describe('per-guild databases', () => {
     process.env.DATA_DIR = baseDir;
     process.env.ADMIN_GLOBAL_DB_PATH = ':memory:';
     // Clean test dir
-    try { fs.rmSync(baseDir, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(baseDir, { recursive: true, force: true }); } catch { }
   });
 
   test('economy state does not cross guilds', async () => {
@@ -19,15 +27,15 @@ describe('per-guild databases', () => {
     // Faucet-like grants
     await adjustBalance(G1, 'U1', 100, 'seed');
     await adjustBalance(G2, 'U1', 300, 'seed');
-    expect(getBalance(G1, 'U1')).toBe(100);
-    expect(getBalance(G2, 'U1')).toBe(300);
+    expect(getBalance(G1, 'U1')).toBe(100n);
+    expect(getBalance(G2, 'U1')).toBe(300n);
     // Transfer within G1
     await transfer(G1, 'U1', 'U2', 50);
-    expect(getBalance(G1, 'U1')).toBe(50);
-    expect(getBalance(G1, 'U2')).toBe(50);
+    expect(getBalance(G1, 'U1')).toBe(50n);
+    expect(getBalance(G1, 'U2')).toBe(50n);
     // G2 unaffected
-    expect(getBalance(G2, 'U1')).toBe(300);
-    expect(getBalance(G2, 'U2')).toBe(0);
+    expect(getBalance(G2, 'U1')).toBe(300n);
+    expect(getBalance(G2, 'U2')).toBe(0n);
   });
 
   test('guild admin is scoped; super admin is global', async () => {
@@ -44,7 +52,7 @@ describe('per-guild databases', () => {
     // Create a legacy mono DB with a guild_settings table carrying guild_id
     const legacyDir = path.resolve('./data');
     const legacyPath = path.join(legacyDir, 'data.db');
-    try { fs.mkdirSync(legacyDir, { recursive: true }); } catch {}
+    try { fs.mkdirSync(legacyDir, { recursive: true }); } catch { }
     const Database = (await import('better-sqlite3')).default;
     const db = new Database(legacyPath);
     db.exec(`CREATE TABLE IF NOT EXISTS guild_settings(guild_id TEXT PRIMARY KEY, max_bet INTEGER, min_bet INTEGER, faucet_limit INTEGER, public_results INTEGER, theme TEXT);

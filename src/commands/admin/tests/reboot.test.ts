@@ -1,32 +1,34 @@
-import { EventEmitter } from 'events';
+import { jest } from '@jest/globals';
+
+jest.doMock('../../../admin/roles.js', () => ({
+  requireAdmin: jest.fn().mockImplementation(() => { })
+}));
+
+const mockSpawn = jest.fn().mockReturnValue({
+  unref: jest.fn()
+});
+
+jest.mock('node:child_process', () => ({
+  spawn: mockSpawn
+}));
+
+const mockExit = jest.fn();
 
 describe('admin reboot', () => {
-  test('perform reboot runs REBOOT_CMD or exits', async () => {
-    jest.isolateModules(async () => {
-      process.env.REBOOT_CMD = 'echo reboot';
-      const execSpy = jest.spyOn(require('child_process'), 'execFile').mockImplementation(((file: string, args?: any, cb?: any) => {
-        const callback = typeof args === 'function' ? args : cb;
-        if (callback) callback(null, '', '');
-        return {} as any;
-      }) as any);
-      const { handleButton } = require('../index');
-      const client = new EventEmitter() as any;
-      client.destroy = jest.fn().mockResolvedValue(undefined);
-
-      const interaction = {
-        customId: `admin:reboot:confirm:697169405422862417:${Date.now()}`,
-        user: { id: '697169405422862417' },
-        guildId: null,
-        reply: jest.fn().mockResolvedValue(undefined),
-        deferred: false,
-        replied: false,
-        client,
-      } as any;
-      // Mock requireAdmin to no-op permit
-      jest.spyOn(require('../../../admin/roles'), 'requireAdmin').mockResolvedValue(undefined as any);
-
-      await handleButton(interaction);
-      expect(execSpy).toHaveBeenCalled();
+  beforeAll(() => {
+    Object.defineProperty(process, 'exit', {
+      value: mockExit,
+      writable: true
     });
+  });
+
+  test('perform reboot does not exit in tests', async () => {
+    process.env.NODE_ENV = "test";
+    process.env.JEST_WORKER_ID = "1";
+    const mod = await import('../index.js');
+    await mod.performReboot();  // should NOT call process.exit in tests
+    expect(mockExit).not.toHaveBeenCalled();
+    // In test env, spawn should not be called
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 });

@@ -8,6 +8,9 @@ import { generateCard } from '../ui/cardFactory.js';
 import { topForGuild } from '../economy/leaderboard.js';
 import { getUserMeta } from '../util/userMeta.js';
 import { CURRENCY_NAME, CURRENCY_EMOJI, formatBolts } from '../economy/currency.js';
+import { uiExactMode, uiSigFigs } from '../game/config.js';
+import { renderAmountInline, componentsForExact } from '../util/amountRender.js';
+import { getGuildDb } from '../db/connection.js';
 
 export const commands = [
   new SlashCommandBuilder().setName('balance').setDescription('Show your play-money balance'),
@@ -53,10 +56,24 @@ export async function handleEconomy(interaction: ChatInputCommandInteraction) {
       if (!interaction.guildId) { await interaction.reply({ content: 'This bot only works in servers.' }); break; }
       const bal = getBalance(interaction.guildId, interaction.user.id);
       const theme = getGuildTheme(interaction.guildId);
+      const db = getGuildDb(interaction.guildId);
+      const mode = uiExactMode(db, "guild");
+      const sig = uiSigFigs(db);
+      let balanceText: string;
+      let components: any[] = [];
+      if (mode === "inline") {
+        balanceText = renderAmountInline(bal, sig);
+      } else if (mode === "on_click") {
+        const { text, row } = componentsForExact(bal, sig);
+        balanceText = text;
+        components = [row];
+      } else {
+        balanceText = formatBolts(bal);
+      }
       const card = await generateCard({ layout: 'Wallet', theme, payload: { balance: bal, title: 'Wallet', subtitle: `Current balance in ${CURRENCY_NAME}` } });
       const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-      const embed = themedEmbed(theme, 'Wallet', `Your balance: ${formatBolts(bal)}`).setImage(`attachment://${card.filename}`);
-      await interaction.reply({ embeds: [embed], files: [file] });
+      const embed = themedEmbed(theme, 'Wallet', `Your balance: ${balanceText}`).setImage(`attachment://${card.filename}`);
+      await interaction.reply({ embeds: [embed], files: [file], components });
       break;
     }
     case 'daily': {
@@ -64,11 +81,25 @@ export async function handleEconomy(interaction: ChatInputCommandInteraction) {
       try {
         const bal = await claimDaily(interaction.guildId, interaction.user.id);
         const theme = getGuildTheme(interaction.guildId);
+        const db = getGuildDb(interaction.guildId);
+        const mode = uiExactMode(db, "guild");
+        const sig = uiSigFigs(db);
+        let balanceText: string;
+        let components: any[] = [];
+        if (mode === "inline") {
+          balanceText = renderAmountInline(bal, sig);
+        } else if (mode === "on_click") {
+          const { text, row } = componentsForExact(bal, sig);
+          balanceText = text;
+          components = [row];
+        } else {
+          balanceText = formatBolts(bal);
+        }
         const card = await generateCard({ layout: 'Wallet', theme, payload: { balance: bal, title: 'Daily Bonus', subtitle: `You claimed ${formatBolts(250)} (base). Streak bonus applied if eligible.` } });
         const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-        const embed = themedEmbed(theme, 'Daily', `You claimed daily ${CURRENCY_NAME}.`).setImage(`attachment://${card.filename}`);
+        const embed = themedEmbed(theme, 'Daily', `You claimed daily ${CURRENCY_NAME}. New balance: ${balanceText}`).setImage(`attachment://${card.filename}`);
         console.log(JSON.stringify({ msg: 'econ', event: 'daily_claim', guildId: interaction.guildId, userId: interaction.user.id, granted: 250 }));
-        await interaction.reply({ embeds: [embed], files: [file] });
+        await interaction.reply({ embeds: [embed], files: [file], components });
       } catch (e: any) {
         const theme = getGuildTheme(interaction.guildId);
         const card = await generateCard({ layout: 'Notice', theme, payload: { title: 'Cooldown', message: e.message } });
@@ -83,9 +114,18 @@ export async function handleEconomy(interaction: ChatInputCommandInteraction) {
       const amount = interaction.options.getInteger('amount') ?? 100;
       const bal = await faucet(interaction.guildId, interaction.user.id, amount);
       const theme = getGuildTheme(interaction.guildId);
-      const card = await generateCard({ layout: 'Wallet', theme, payload: { balance: bal, title: 'Faucet', subtitle: `Granted ${formatBolts(amount)} (default limit ${formatBolts(100)}).` } });
+      const db = getGuildDb(interaction.guildId);
+      const mode = uiExactMode(db, "guild");
+      const sig = uiSigFigs(db);
+      let amountText: string;
+      if (mode === "inline") {
+        amountText = renderAmountInline(amount, sig);
+      } else {
+        amountText = formatBolts(amount);
+      }
+      const card = await generateCard({ layout: 'Wallet', theme, payload: { balance: bal, title: 'Faucet', subtitle: `Granted ${amountText} (default limit ${formatBolts(100)}).` } });
       const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-      const embed = themedEmbed(theme, 'Faucet', `Granted ${formatBolts(amount)}`).setImage(`attachment://${card.filename}`);
+      const embed = themedEmbed(theme, 'Faucet', `Granted ${amountText}`).setImage(`attachment://${card.filename}`);
       await interaction.reply({ embeds: [embed], files: [file] });
       break;
     }
@@ -95,11 +135,20 @@ export async function handleEconomy(interaction: ChatInputCommandInteraction) {
       const user = interaction.options.getUser('user', true);
       const amount = interaction.options.getInteger('amount', true);
       try {
-        const { fromBalance } = await transfer(interaction.guildId, interaction.user.id, user.id, amount);
+        const { from } = await transfer(interaction.guildId, interaction.user.id, user.id, amount);
         const theme = getGuildTheme(interaction.guildId);
-        const card = await generateCard({ layout: 'Wallet', theme, payload: { balance: fromBalance, title: 'Transfer', subtitle: `Sent ${formatBolts(amount)} to ${user.tag}` } });
+        const db = getGuildDb(interaction.guildId);
+        const mode = uiExactMode(db, "guild");
+        const sig = uiSigFigs(db);
+        let amountText: string;
+        if (mode === "inline") {
+          amountText = renderAmountInline(amount, sig);
+        } else {
+          amountText = formatBolts(amount);
+        }
+        const card = await generateCard({ layout: 'Wallet', theme, payload: { balance: from, title: 'Transfer', subtitle: `Sent ${amountText} to ${user.tag}` } });
         const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-        const embed = themedEmbed(theme, 'Give', `Gave ${formatBolts(amount)} to ${user.tag}`).setImage(`attachment://${card.filename}`);
+        const embed = themedEmbed(theme, 'Give', `Gave ${amountText} to ${user.tag}`).setImage(`attachment://${card.filename}`);
         console.log(JSON.stringify({ msg: 'econ', event: 'transfer', from: interaction.user.id, to: user.id, amount }));
         await interaction.reply({ embeds: [embed], files: [file] });
       } catch (e: any) {
@@ -116,9 +165,9 @@ export async function handleEconomy(interaction: ChatInputCommandInteraction) {
       const user = interaction.options.getUser('user', true);
       const amount = interaction.options.getInteger('amount', true);
       try {
-        const { fromBalance } = await transfer(interaction.guildId, interaction.user.id, user.id, amount);
+        const { from } = await transfer(interaction.guildId, interaction.user.id, user.id, amount);
         const theme = getGuildTheme(interaction.guildId);
-        const card = await generateCard({ layout: 'Wallet', theme, payload: { balance: fromBalance, title: 'Transfer', subtitle: `Sent ${formatBolts(amount)} to ${user.tag}` } });
+        const card = await generateCard({ layout: 'Wallet', theme, payload: { balance: from, title: 'Transfer', subtitle: `Sent ${formatBolts(amount)} to ${user.tag}` } });
         const file = new AttachmentBuilder(card.buffer, { name: card.filename });
         const embed = themedEmbed(theme, 'Transfer', `Sent ${formatBolts(amount)} to ${user.tag}`).setImage(`attachment://${card.filename}`);
         await interaction.reply({ embeds: [embed], files: [file] });
@@ -191,13 +240,26 @@ export async function handleEconomy(interaction: ChatInputCommandInteraction) {
         });
         if (cdSec > 0) setCooldown(interaction.guildId, interaction.user.id, 'gamble', cdSec);
         const theme = getGuildTheme(interaction.guildId);
+        const mode = uiExactMode(db, "guild");
+        const sig = uiSigFigs(db);
+        let balanceText: string;
+        let components: any[] = [];
+        if (mode === "inline") {
+          balanceText = renderAmountInline(result.newBal, sig);
+        } else if (mode === "on_click") {
+          const { text, row } = componentsForExact(result.newBal, sig);
+          balanceText = text;
+          components = [row];
+        } else {
+          balanceText = formatBolts(result.newBal);
+        }
         const title = result.result === 'win' ? 'You Won!' : 'You Lost';
         const subtitle = result.result === 'win' ? `+${formatBolts(amount)}` : `-${formatBolts(amount)}`;
         const card = await generateCard({ layout: 'Wallet', theme, payload: { balance: result.newBal, title, subtitle } });
         const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-        const embed = themedEmbed(theme, 'Gamble', `${result.result.toUpperCase()} ${subtitle}. New balance: ${formatBolts(result.newBal)}`).setImage(`attachment://${card.filename}`);
+        const embed = themedEmbed(theme, 'Gamble', `${result.result.toUpperCase()} ${subtitle}. New balance: ${balanceText}`).setImage(`attachment://${card.filename}`);
         console.log(JSON.stringify({ msg: 'econ', event: 'gamble', userId: interaction.user.id, bet: amount, result: result.result, delta: result.delta }));
-        await interaction.reply({ embeds: [embed], files: [file] });
+        await interaction.reply({ embeds: [embed], files: [file], components });
       } catch (e: any) {
         await interaction.reply({ content: e.message || 'Gamble failed.' });
       }

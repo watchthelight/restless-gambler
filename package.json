@@ -9,8 +9,8 @@
   "engineStrict": true,
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
-    "start:pretty": "cross-env CLI_THEME=neo node dist/index.js",
+    "start": "node --no-deprecation dist/index.js",
+    "start:pretty": "cross-env CLI_THEME=neo node --no-deprecation dist/index.js",
     "dev": "tsx watch src/index.ts",
     "backup": "tsx scripts/backup.ts",
     "migrate": "node dist/db/migrate.js || tsx src/db/migrate.ts",
@@ -29,7 +29,7 @@
     "preinstall": "npm run env:check",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write .",
-    "test": "jest --runInBand",
+    "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.mjs --runInBand",
     "build:cards": "node -e \"console.log('build:cards placeholder');\"",
     "setup:env": "node -e \"const fs=require('fs');if(!fs.existsSync('.env')){fs.copyFileSync('.env.example','.env');console.log('Created .env from .env.example');}else{console.log('.env already exists')}\"",
     "start:cli": "node dist/index.js"

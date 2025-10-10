@@ -9,14 +9,15 @@ function stripOuterTransactions(sql: string): string {
 }
 
 export function migrateGuildDb(db: Database.Database, guildId: string, log: { info?: (...args: any[]) => void; warn?: (...args: any[]) => void; error?: (...args: any[]) => void } = console) {
+    const QUIET = !process.env.VERBOSE;
     const logger = {
-        info: log.info?.bind(log) ?? (() => { }),
+        info: QUIET ? (() => {}) : (log.info?.bind(log) ?? (() => { })),
         warn: log.warn?.bind(log) ?? (() => { }),
         error: log.error?.bind(log) ?? (() => { }),
     };
 
     try {
-        logger.info({ msg: 'migrate_guild_start', guildId });
+        if (!QUIET) logger.info({ msg: 'migrate_guild_start', guildId });
 
         // Check and rebuild _migrations if necessary
         const tableInfo = db.prepare("PRAGMA table_info(_migrations)").all() as any[];
@@ -73,12 +74,40 @@ export function migrateGuildDb(db: Database.Database, guildId: string, log: { in
                 db.prepare("INSERT OR IGNORE INTO _migrations(name, applied_at) VALUES (?, strftime('%s','now'))").run(file);
                 db.exec(`RELEASE ${spName};`);
                 logger.info({ msg: 'migrate_guild', guildId, file });
-            } catch (e) {
-                db.exec(`ROLLBACK TO ${spName};`);
-                db.exec(`RELEASE ${spName};`);
-                logger.error({ msg: 'migrate_guild_error', guildId, file, error: String(e) });
-                throw e;
+            } catch (e: any) {
+                // Check if error is due to column already existing (duplicate column error)
+                const isDuplicateColumn = e && typeof e.message === 'string' && e.message.includes('duplicate column');
+                if (isDuplicateColumn) {
+                    // Column already exists, mark migration as applied and continue
+                    db.exec(`RELEASE ${spName};`);
+                    db.prepare("INSERT OR IGNORE INTO _migrations(name, applied_at) VALUES (?, strftime('%s','now'))").run(file);
+                    logger.info({ msg: 'migrate_guild_skipped_duplicate', guildId, file, reason: 'column already exists' });
+                } else {
+                    db.exec(`ROLLBACK TO ${spName};`);
+                    db.exec(`RELEASE ${spName};`);
+                    logger.error({ msg: 'migrate_guild_error', guildId, file, error: String(e) });
+                    throw e;
+                }
             }
+        }
+
+        // Post-migration schema validation for guild_settings
+        try {
+            const guildSettingsInfo = db.prepare("PRAGMA table_info(guild_settings)").all() as any[];
+            const hasUpdatedAt = guildSettingsInfo.some((col: any) => col.name === 'updated_at');
+
+            if (!hasUpdatedAt) {
+                logger.warn({ msg: 'schema_validation_failed', guildId, table: 'guild_settings', missing: 'updated_at' });
+                // Attempt to add the column as a fallback
+                try {
+                    db.exec("ALTER TABLE guild_settings ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;");
+                    logger.info({ msg: 'schema_repair_success', guildId, table: 'guild_settings', column: 'updated_at' });
+                } catch (repairError: any) {
+                    logger.error({ msg: 'schema_repair_failed', guildId, table: 'guild_settings', error: String(repairError) });
+                }
+            }
+        } catch (validationError: any) {
+            logger.warn({ msg: 'schema_validation_error', guildId, error: String(validationError) });
         }
 
         logger.info({ msg: 'migrate_guild_done', guildId });

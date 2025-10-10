@@ -9,6 +9,8 @@ import { getGuildTheme } from '../../ui/theme.js';
 import { generateCard } from '../../ui/cardFactory.js';
 import { formatBolts } from '../../economy/currency.js';
 import { outcomeMessage, formatBolt } from '../../ui/outcome.js';
+import { uiExactMode, uiSigFigs } from '../../game/config.js';
+import { renderAmountInline } from '../../util/amountRender.js';
 import { findActiveSession, createSession, updateSession, settleSession } from '../../game/blackjack/sessionStore.js';
 
 export const data = new SlashCommandBuilder()
@@ -40,7 +42,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const userId = interaction.user.id;
   const bal = getBalance(interaction.guildId, userId);
   if (bal < bet) {
-    await interaction.reply({ content: `Insufficient balance (${formatBolts(bal)}).` });
+    const db = getGuildDb(interaction.guildId);
+    const mode = uiExactMode(db, "guild");
+    const sig = uiSigFigs(db);
+    const balText = mode === "inline" ? renderAmountInline(bal, sig) : formatBolts(bal);
+    await interaction.reply({ content: `Insufficient balance (${balText}).` });
     return;
   }
   await interaction.deferReply();
@@ -133,11 +139,15 @@ export async function handleButton(interaction: ButtonInteraction) {
     const dealerCards = state.dealer.cards.map(renderCard);
     const playerCards = state.playerHands[0].cards.map(renderCard);
     const balanceNow = getBalance(interaction.guildId, userId);
+    const db = getGuildDb(interaction.guildId);
+    const mode = uiExactMode(db, "guild");
+    const sig = uiSigFigs(db);
+    const balText = mode === "inline" ? renderAmountInline(balanceNow, sig) : formatBolt(balanceNow);
     const card = await generateCard({ layout: 'GameResult', theme, payload: { kind: 'blackjack', dealer: dealerCards, player: playerCards, bet: state.bet, payout, delta, balance: balanceNow } });
     const file = new AttachmentBuilder(card.buffer, { name: card.filename });
     const headline = delta > 0 ? outcomeMessage('win', delta) : delta < 0 ? outcomeMessage('loss', Math.abs(delta)) : outcomeMessage('push');
     const final = themedEmbed(theme, '🂡 Blackjack Result', `${headline}
-New balance: ${formatBolt(balanceNow)}`).setImage(`attachment://${card.filename}`);
+New balance: ${balText}`).setImage(`attachment://${card.filename}`);
     clearState(interaction.guildId, interaction.channelId, userId);
     await interaction.reply({ embeds: [final], files: [file] });
   } else {

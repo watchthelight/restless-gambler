@@ -115,11 +115,16 @@ export function getGuildDb(guildId: string): Database.Database {
     INSERT INTO guild_settings(key,value,updated_at)
     SELECT 'slots.max_bet','1000', strftime('%s','now')
     WHERE NOT EXISTS (SELECT 1 FROM guild_settings WHERE key='slots.max_bet');
+    INSERT INTO guild_settings(key,value,updated_at)
+    SELECT 'faucet_limit','100', strftime('%s','now')
+    WHERE NOT EXISTS (SELECT 1 FROM guild_settings WHERE key='faucet_limit');
   `);
   ensureCompatViews(db);
-  try {
-    console.info(JSON.stringify({ msg: "guild_db_open", guildId, path: file }));
-  } catch { }
+  if (VERBOSE) {
+    try {
+      console.info(JSON.stringify({ msg: "guild_db_open", guildId, path: file }));
+    } catch { }
+  }
   guildCache.set(guildId, db);
   return db;
 }

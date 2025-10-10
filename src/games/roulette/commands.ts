@@ -11,7 +11,8 @@ import { formatBolts } from '../../economy/currency.js';
 import { getGuildDb } from '../../db/connection.js';
 import { outcomeMessage, formatBolt } from '../../ui/outcome.js';
 import { getSettingNum } from '../../db/kv.js';
-import { safeDefer, safeEdit, replyError } from '../../game/config.js';
+import { safeDefer, safeEdit, replyError, uiExactMode, uiSigFigs } from '../../game/config.js';
+import { renderAmountInline } from '../../util/amountRender.js';
 
 export const data = new SlashCommandBuilder()
   .setName('roulette')
@@ -86,7 +87,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
   const bal = getBalance(interaction.guildId, userId);
   if (bal < betAmount) {
-    await interaction.reply({ content: `Insufficient balance (${formatBolts(bal)}).` });
+    const mode = uiExactMode(db, "guild");
+    const sig = uiSigFigs(db);
+    const balText = mode === "inline" ? renderAmountInline(bal, sig) : formatBolts(bal);
+    await interaction.reply({ content: `Insufficient balance (${balText}).` });
     return;
   }
 
@@ -108,9 +112,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
     const file = new AttachmentBuilder(card.buffer, { name: card.filename });
     const headline = delta > 0 ? outcomeMessage('win', delta) : delta < 0 ? outcomeMessage('loss', Math.abs(delta)) : outcomeMessage('push');
+    const mode = uiExactMode(db, "guild");
+    const sig = uiSigFigs(db);
+    const balText = mode === "inline" ? renderAmountInline(newBal, sig) : formatBolt(newBal);
     const embed = themedEmbed(theme, '🎡 Roulette', `${summary.number} (${summary.color})
 ${headline}
-New balance: ${formatBolt(newBal)}`).setImage(`attachment://${card.filename}`);
+New balance: ${balText}`).setImage(`attachment://${card.filename}`);
 
     const primary = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId(`roulette:repeat:${userId}`).setStyle(ButtonStyle.Primary).setLabel('Repeat Bet'),

@@ -42,7 +42,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       buffer = card.buffer; filename = card.filename; break;
     }
     default:
-      await interaction.reply({ ephemeral: true, content: 'Unknown component.' });
+      await interaction.reply({ flags: MessageFlags.Ephemeral, content: 'Unknown component.' });
       return;
   }
   const file = new AttachmentBuilder(buffer, { name: filename });

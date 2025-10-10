@@ -141,7 +141,7 @@ export function initInteractionRouter(client: Client) {
       try {
         const cmd = getSlashCommands().find((c) => c.name === name);
         if (!cmd) {
-          if (!acknowledged && !i.replied && !i.deferred) await i.reply({ content: 'Unknown command.', ephemeral: true }).catch(() => { });
+          if (!acknowledged && !i.replied && !i.deferred) await i.reply({ content: 'Unknown command.', flags: MessageFlags.Ephemeral }).catch(() => { });
           else if (i.deferred && !i.replied) await i.editReply({ content: 'Unknown command.' }).catch(() => { });
           return;
         }
@@ -167,7 +167,13 @@ export function initInteractionRouter(client: Client) {
           throw e;
         }
       } catch (e) {
-        console.error(JSON.stringify({ msg: 'handler_error', name: i.commandName, error: String(e) }));
+        const s = String((e as any)?.message || e);
+        const DUP = /already been sent or deferred|Unknown interaction|40060/;
+        if (DUP.test(s)) {
+          console.info(JSON.stringify({ msg: 'interaction_dup_ignored' }));
+          return;
+        }
+        console.error(JSON.stringify({ msg: 'handler_error', name: i.commandName, error: s }));
         log.error('Command handler error', 'interaction', { command: i.commandName, error: String(e) });
         logPermError(e, i);
         if (!acknowledged && !i.replied && !i.deferred) await i.reply(VISIBILITY_MODE === 'public' ? { content: 'Something went wrong. Try again.' } : { content: 'Something went wrong. Try again.', flags: MessageFlags.Ephemeral }).catch(() => { });
@@ -176,7 +182,13 @@ export function initInteractionRouter(client: Client) {
         clearTimeout(t);
       }
     } catch (e) {
-      console.error(JSON.stringify({ msg: 'router_error', error: String(e) }));
+      const s = String((e as any)?.message || e);
+      const DUP = /already been sent or deferred|Unknown interaction|40060/;
+      if (DUP.test(s)) {
+        console.info(JSON.stringify({ msg: 'interaction_dup_ignored' }));
+        return;
+      }
+      console.error(JSON.stringify({ msg: 'router_error', error: s }));
       log.error('Router error', 'interaction', { error: String(e) });
     }
   });

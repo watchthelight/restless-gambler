@@ -1,26 +1,27 @@
-import { StringSelectMenuInteraction, AttachmentBuilder } from 'discord.js';
+import { StringSelectMenuInteraction, AttachmentBuilder, MessageFlags } from 'discord.js';
 import { getBalance, adjustBalance } from '../../economy/wallet.js';
 import { spin, defaultConfig } from '../../games/slots/engine.js';
 import { cryptoRNG } from '../../util/rng.js';
 import { getGuildTheme } from '../../ui/theme.js';
 import { generateCard } from '../../ui/cardFactory.js';
 import { themedEmbed } from '../../ui/embeds.js';
+import { safeReply } from '../../interactions/reply.js';
 
 export async function handleSlotsSelect(interaction: StringSelectMenuInteraction) {
   const [prefix, action, userId] = interaction.customId.split(':');
   if (prefix !== 'slots' || action !== 'betpreset') return;
   if (interaction.user.id !== userId) {
-    await interaction.reply({ content: 'This selection is not for you.' });
+    await safeReply(interaction, { content: 'This selection is not for you.', flags: MessageFlags.Ephemeral });
     return;
   }
   const bet = parseInt(interaction.values[0], 10);
-  if (!interaction.guildId) { await interaction.reply({ content: 'This bot only works in servers.' }); return; }
+  if (!interaction.guildId) { await safeReply(interaction, { content: 'This bot only works in servers.', flags: MessageFlags.Ephemeral }); return; }
   const current = getBalance(interaction.guildId, userId);
   if (current < bet) {
-    await interaction.reply({ content: `Insufficient balance for ${bet}.` });
+    await safeReply(interaction, { content: `Insufficient balance for ${bet}.`, flags: MessageFlags.Ephemeral });
     return;
   }
-  await interaction.deferReply();
+  await interaction.deferUpdate().catch(() => { });
   const result = spin(bet, defaultConfig, cryptoRNG);
   const net = result.payout - bet;
   await adjustBalance(interaction.guildId, userId, -bet, 'slots:bet');

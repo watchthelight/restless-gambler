@@ -5,6 +5,10 @@ function getKV(db: Database.Database, key: string): string | null {
     return r ? String(r.value) : null;
 }
 
+export function setKV(db: Database.Database, key: string, value: string) {
+    db.prepare("INSERT INTO guild_settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, value);
+}
+
 function num(v: any, d: number): number {
     if (v === null || v === undefined) return d;
     if (typeof v === "string" && v.trim() === "") return d;
@@ -89,4 +93,14 @@ export async function replyError(interaction: any, code: string, log: any, extra
             await interaction.reply?.({ content: `❗ ${code}`, ephemeral: true });
         }
     } catch { }
+}
+
+export function uiExactMode(db: Database.Database, scope: "guild" | "user", userId?: string): "off" | "inline" | "on_click" {
+    // guild key: ui.show_exact_mode ; user key (optional): ui.show_exact_mode.user.<id>
+    const key = scope === "user" && userId ? `ui.show_exact_mode.user.${userId}` : "ui.show_exact_mode";
+    return (getKV(db, key) ?? "on_click") as any;
+}
+export function uiSigFigs(db: Database.Database): number {
+    const n = Number(getKV(db, "ui.compact_sigfigs") ?? 3);
+    return Math.min(5, Math.max(3, Number.isFinite(n) ? n : 3));
 }

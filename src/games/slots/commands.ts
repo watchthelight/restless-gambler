@@ -15,7 +15,8 @@ import { AttachmentBuilder, ActionRowBuilder as Row, StringSelectMenuBuilder, St
 import { formatBolts } from '../../economy/currency.js';
 import { getGuildDb } from '../../db/connection.js';
 import { outcomeMessage, formatBolt } from '../../ui/outcome.js';
-import { slotsLimits, safeDefer, safeEdit, replyError } from '../../game/config.js';
+import { slotsLimits, safeDefer, safeEdit, replyError, uiExactMode, uiSigFigs } from '../../game/config.js';
+import { renderAmountInline } from '../../util/amountRender.js';
 
 export const data = new SlashCommandBuilder()
   .setName('slots')
@@ -41,7 +42,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return safeEdit(interaction, { ephemeral: true, content: `Maximum bet is ${formatBolts(maxBet)}.` });
     }
     if (current < bet) {
-      return safeEdit(interaction, { ephemeral: true, content: `Insufficient balance. Your balance is ${formatBolts(current)}.` });
+      const mode = uiExactMode(db, "guild");
+      const sig = uiSigFigs(db);
+      const balText = mode === "inline" ? renderAmountInline(current, sig) : formatBolts(current);
+      return safeEdit(interaction, { ephemeral: true, content: `Insufficient balance. Your balance is ${balText}.` });
     }
     const result = spin(bet, defaultConfig, cryptoRNG);
     const net = result.payout - bet;
@@ -56,8 +60,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
     const file = new AttachmentBuilder(card.buffer, { name: card.filename });
     const headline = net > 0 ? outcomeMessage('win', net) : net < 0 ? outcomeMessage('loss', Math.abs(net)) : outcomeMessage('push');
+    const mode = uiExactMode(db, "guild");
+    const sig = uiSigFigs(db);
+    const balText = mode === "inline" ? renderAmountInline(newBal, sig) : formatBolt(newBal);
     const embed = themedEmbed(theme, '🎰 Slots', `${headline}
-New balance: ${formatBolt(newBal)}`).setImage(
+New balance: ${balText}`).setImage(
       `attachment://${card.filename}`,
     );
 
@@ -69,10 +76,10 @@ New balance: ${formatBolt(newBal)}`).setImage(
       .setCustomId(`slots:betpreset:${userId}`)
       .setPlaceholder('Quick bet sizes')
       .addOptions(
-        new StringSelectMenuOptionBuilder().setLabel(`1% (${formatBolts(Math.max(1, Math.floor(newBal * 0.01)))})`).setValue(String(Math.max(1, Math.floor(newBal * 0.01)))),
-        new StringSelectMenuOptionBuilder().setLabel(`5% (${formatBolts(Math.max(1, Math.floor(newBal * 0.05)))})`).setValue(String(Math.max(1, Math.floor(newBal * 0.05)))),
-        new StringSelectMenuOptionBuilder().setLabel(`10% (${formatBolts(Math.max(1, Math.floor(newBal * 0.1)))})`).setValue(String(Math.max(1, Math.floor(newBal * 0.1)))),
-        new StringSelectMenuOptionBuilder().setLabel(`25% (${formatBolts(Math.max(1, Math.floor(newBal * 0.25)))})`).setValue(String(Math.max(1, Math.floor(newBal * 0.25)))),
+        new StringSelectMenuOptionBuilder().setLabel(`1% (${formatBolts(Math.max(1, Math.floor(Number(newBal) * 0.01)))})`).setValue(String(Math.max(1, Math.floor(Number(newBal) * 0.01)))),
+        new StringSelectMenuOptionBuilder().setLabel(`5% (${formatBolts(Math.max(1, Math.floor(Number(newBal) * 0.05)))})`).setValue(String(Math.max(1, Math.floor(Number(newBal) * 0.05)))),
+        new StringSelectMenuOptionBuilder().setLabel(`10% (${formatBolts(Math.max(1, Math.floor(Number(newBal) * 0.1)))})`).setValue(String(Math.max(1, Math.floor(Number(newBal) * 0.1)))),
+        new StringSelectMenuOptionBuilder().setLabel(`25% (${formatBolts(Math.max(1, Math.floor(Number(newBal) * 0.25)))})`).setValue(String(Math.max(1, Math.floor(Number(newBal) * 0.25)))),
       );
     return safeEdit(interaction, { embeds: [embed], files: [file], components: [primary, new Row<any>().addComponents(betSelect as any)] });
   } catch (e: any) {

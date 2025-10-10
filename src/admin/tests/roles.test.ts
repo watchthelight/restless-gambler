@@ -1,3 +1,5 @@
+import { jest } from '@jest/globals';
+
 describe('admin roles', () => {
   beforeAll(() => {
     process.env.ADMIN_DB_PATH = ':memory:';
@@ -5,26 +7,21 @@ describe('admin roles', () => {
   });
 
   test('seed and role resolution', async () => {
-    jest.isolateModules(() => {
-      const { getDB } = require('../../db/connection.js');
-      const db = getDB('admin');
-      db.exec(`
-        CREATE TABLE IF NOT EXISTS admins(
-          uid TEXT PRIMARY KEY,
-          nickname TEXT,
-          role TEXT CHECK(role IN ('SUPER','ADMIN')),
-          created_at INTEGER
-        );
-      `);
-      const now = Date.now();
-      db.prepare('INSERT INTO admins(uid, nickname, role, created_at) VALUES (?,?,?,?)').run('697169405422862417', 'Bash', 'SUPER', now);
-      const { getRole, Role, addAdmin, removeAdmin } = require('../roles');
-      expect(getRole('697169405422862417')).toBe(Role.SUPER);
-      expect(getRole('unknown')).toBe(Role.BASE);
-      addAdmin('u1', 'Test', 'ADMIN');
-      expect(getRole('u1')).toBe(Role.ADMIN);
-      removeAdmin('u1');
-      expect(getRole('u1')).toBe(Role.BASE);
-    });
+    const { getDB } = await import('../../db/connection.js');
+    const db = getDB('admin');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS super_admins(
+        user_id TEXT PRIMARY KEY,
+        created_at INTEGER
+      );
+    `);
+    const { seedSuperAdmin, getRole, Role, addAdmin, removeAdmin } = await import('../roles.js');
+    seedSuperAdmin('697169405422862417');
+    expect(getRole('697169405422862417')).toBe(Role.SUPER);
+    expect(getRole('unknown')).toBe(Role.BASE);
+    addAdmin('u1', 'Test', 'SUPER');
+    expect(getRole('u1')).toBe(Role.SUPER);
+    removeAdmin('u1');
+    expect(getRole('u1')).toBe(Role.BASE);
   });
 });

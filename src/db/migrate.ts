@@ -69,7 +69,7 @@ export async function runMigrations() {
   adminDb.prepare(sql).run("697169405422862417");
   const adminDir = path.resolve('src/db/migrations/global');
   const adminApplied = await runDirOnDb(adminDb, adminDir);
-  if (adminApplied.length) console.log(JSON.stringify({ msg: 'migrations applied (global)', applied: adminApplied }));
+  if (adminApplied.length && process.env.VERBOSE) console.log(JSON.stringify({ msg: 'migrations applied (global)', applied: adminApplied }));
 
   // 3) For each guild DB, run guild migrations
   let guildCount = 0;
@@ -90,8 +90,10 @@ export async function runMigrations() {
     bar.stop();
   }
   if (!MIGRATE_LOGGED) {
-    console.log('migrate done', { legacy: legacyMigrated, guilds: guildCount });
-    try { console.log(JSON.stringify({ msg: 'migrate', event: 'done' })); } catch { }
+    if (process.env.VERBOSE) {
+      console.log('migrate done', { legacy: legacyMigrated, guilds: guildCount });
+      try { console.log(JSON.stringify({ msg: 'migrate', event: 'done' })); } catch { }
+    }
     MIGRATE_LOGGED = true;
   }
 }

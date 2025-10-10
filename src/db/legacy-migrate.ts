@@ -32,7 +32,7 @@ export function migrateLegacyToPerGuild(): number {
     // Nothing to migrate safely; archive and return
     const archived = archiveLegacy(legacy_data);
     legacy.close();
-    try { console.info(JSON.stringify({ msg: 'legacy_migrated', from: legacy_data, guilds: 0, archived })); } catch {}
+    try { console.info(JSON.stringify({ msg: 'legacy_migrated', from: legacy_data, guilds: 0, archived })); } catch { }
     return 0;
   }
 
@@ -56,9 +56,13 @@ export function migrateLegacyToPerGuild(): number {
         .prepare('SELECT max_bet, min_bet, faucet_limit, public_results, theme FROM guild_settings WHERE guild_id = ?')
         .get(gid) as any;
       if (row) {
-        db.prepare(
-          'INSERT INTO guild_settings(min_bet, max_bet, faucet_limit, public_results, theme) VALUES(?,?,?,?,?)'
-        ).run(row.min_bet ?? 10, row.max_bet ?? 10000, row.faucet_limit ?? 100, row.public_results ?? 1, row.theme ?? 'midnight');
+        const now = Date.now();
+        const ins = db.prepare('INSERT INTO guild_settings(key, value, updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at');
+        ins.run('min_bet', row.min_bet ?? 10, now);
+        ins.run('max_bet', row.max_bet ?? 10000, now);
+        ins.run('faucet_limit', row.faucet_limit ?? 100, now);
+        ins.run('public_results', row.public_results ?? 1, now);
+        ins.run('theme', row.theme ?? 'midnight', now);
       }
     }
     // wallets -> balances (duplicate, since legacy had no guild separation)
@@ -108,7 +112,7 @@ export function migrateLegacyToPerGuild(): number {
 
   legacy.close();
   const archived = archiveLegacy(legacy_data);
-  try { console.info(JSON.stringify({ msg: 'legacy_migrated', from: legacy_data, guilds: gids.length, archived })); } catch {}
+  try { console.info(JSON.stringify({ msg: 'legacy_migrated', from: legacy_data, guilds: gids.length, archived })); } catch { }
   return gids.length;
 }
 

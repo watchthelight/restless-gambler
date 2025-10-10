@@ -4,7 +4,7 @@ import { CURRENCY_NAME } from './currency.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export async function claimDaily(guildId: string, userId: string, baseAmount = 250): Promise<number> {
+export async function claimDaily(guildId: string, userId: string, baseAmount = 250): Promise<bigint> {
   const now = Date.now();
   const db = getGuildDb(guildId);
   const last = db
@@ -34,7 +34,7 @@ export async function claimDaily(guildId: string, userId: string, baseAmount = 2
   try {
     const { setCooldown } = await import('./cooldowns.js');
     setCooldown(guildId, userId, 'daily', 24 * 60 * 60);
-  } catch {}
+  } catch { }
   return getBalance(guildId, userId);
 }
 
@@ -42,12 +42,13 @@ export function getGuildFaucetLimit(guildId: string | null): number {
   if (!guildId) return 100;
   const db = getGuildDb(guildId);
   const row = db
-    .prepare('SELECT faucet_limit FROM guild_settings LIMIT 1')
-    .get() as { faucet_limit: number } | undefined;
-  return row?.faucet_limit ?? 100;
+    .prepare('SELECT value FROM guild_settings WHERE key = ?')
+    .get('faucet_limit') as { value: string } | undefined;
+  const limit = row?.value ? parseInt(row.value, 10) : 100;
+  return isNaN(limit) ? 100 : limit;
 }
 
-export async function faucet(guildId: string, userId: string, amount: number): Promise<number> {
+export async function faucet(guildId: string, userId: string, amount: number): Promise<bigint> {
   const limit = getGuildFaucetLimit(guildId);
   const grant = Math.max(1, Math.min(limit, Math.floor(amount || limit)));
   await adjustBalance(guildId, userId, grant, 'faucet');

@@ -9,6 +9,7 @@ import * as EconButtons from './buttons/econ.js';
 import * as BlackjackSlash from '../commands/slash/blackjack.js';
 import * as RouletteCmd from '../games/roulette/commands.js';
 import * as AdminCmd from '../commands/admin/index.js';
+import { onAmountExact, onAmountCopy } from './amountHandlers.js';
 import { getGuildDb } from '../db/connection.js';
 import { migrateGuildDb } from '../db/migrateGuild.js';
 import { safeDefer, replyError } from '../game/config.js';
@@ -82,6 +83,24 @@ export function initInteractionRouter(client: Client) {
           await safeDefer(i, true);
           try {
             await (AdminCmd as any).handleButton(i);
+          } catch (e: any) {
+            await replyError(i, "ERR-COMPONENT", console, { err: String(e) });
+          }
+          return;
+        }
+        if (i.customId.startsWith('amt:exact:')) {
+          await safeDefer(i, true);
+          try {
+            await onAmountExact(i);
+          } catch (e: any) {
+            await replyError(i, "ERR-COMPONENT", console, { err: String(e) });
+          }
+          return;
+        }
+        if (i.customId.startsWith('amt:copy:')) {
+          await safeDefer(i, true);
+          try {
+            await onAmountCopy(i);
           } catch (e: any) {
             await replyError(i, "ERR-COMPONENT", console, { err: String(e) });
           }

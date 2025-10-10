@@ -1,3 +1,87 @@
+2025-10-10 — Hold'em seating MVP
+- Added per-guild tables and players (003_holdem_core.sql)
+- `/holdem create` now reports **Blinds**, **Buy-in (min–max)**, and **Seats**
+- Implemented `/holdem join`, `/holdem leave`, `/holdem status`
+- Wallet debits on join, credits on leave; one seat per user per guild
+- Small, consistent embeds; ephemeral errors with MessageFlags
+- Added tests for join/leave and balance effects
+- Files: [src/games/holdem/store.ts](src/games/holdem/store.ts), [src/games/holdem/view.ts](src/games/holdem/view.ts), [src/games/holdem/commands.ts](src/games/holdem/commands.ts), [src/games/holdem/tests/join.test.ts](src/games/holdem/tests/join.test.ts), [src/db/migrations/guild/003_holdem_core.sql](src/db/migrations/guild/003_holdem_core.sql)
+
+Verification:
+- Build, migrate, start. Run `/holdem create` then verify the embed shows blinds and buy-in range.
+- `/holdem join table:<id> buyin:<min..max>` succeeds; `/holdem status` shows your seat and stack.
+- `/holdem leave` returns stack and updates wallet.
+
+2025-10-10 — Blackjack image renderer hardened (deterministic sizing)
+- Fixed Sharp composite "same dimensions or smaller" errors
+- Implemented deterministic DPR-aware canvas sizing (2x device pixel ratio)
+- Pre-sized card PNGs to exact dimensions before compositing (120x168 CSS px → 240x336 device px)
+- Deterministic layout: configurable card size, gaps, padding, row wrapping
+- Added detailed diagnostics on composite failure (base size, per-card size, offsets)
+- Card files cached with size suffix to prevent mismatched dimensions
+- Vertically stacked dealer/player hands with proper spacing
+- Card backs shown for hidden dealer cards
+- Graceful fallback to Unicode with improved error logging
+- Files: [src/cards/images.ts](src/cards/images.ts), [src/ui/canvas/dpi.ts](src/ui/canvas/dpi.ts), [src/ui/cardsDisplay.ts](src/ui/cardsDisplay.ts)
+
+2025-10-10 — Large, clearly visible playing cards (240px height)
+- Increased card size from 72px to 240px height (~3.3x larger) for clear visibility
+- Enhanced SVG card generation with professional styling:
+  - Large rank (36px) and suit (32px) symbols in corners (rotated in opposite corner)
+  - Huge center suit symbol (96px) for instant card recognition
+  - White background with shadow effects and border
+  - Red cards (hearts/diamonds) and black cards (spades/clubs) properly colored
+  - Standard playing card aspect ratio (0.715)
+- Added proper card back rendering with blue patterned design
+- Updated card compositing to handle larger cards with improved spacing
+- Fixed hideDealer logic: shows actual card backs for hidden dealer cards instead of omitting them
+- Cards render at 2x resolution (480px) then downscale for crisp, anti-aliased display
+- Improved error handling with fallback to Unicode cards
+- All card games (blackjack, etc.) automatically benefit from larger cards
+- Cards cached in `data/cache/cards/240px/` directory
+- Files modified: [src/cards/images.ts](src/cards/images.ts), [src/ui/cardsDisplay.ts](src/ui/cardsDisplay.ts)
+
+2025-10-10 — Admin commands: fixes, prettification, and reboot improvements
+- Fixed `/admin add` to properly use User option (type 6); removed fallback string parsing
+- Replaced all deprecated `ephemeral: true` with `MessageFlags.Ephemeral` throughout admin commands
+- Prettified admin diagnostics with simple embeds (no heavy themed cards):
+  - `/admin appinfo` shows App ID, global command count, and first 10 commands in clean fields
+  - `/admin list` displays super admin and normal admins with dates in structured embed
+  - `/admin list-commands` shows global/guild counts and guild-scoped command list
+  - `/admin force-purge` returns embed with purged guild list
+- Simplified `/admin remove` and `/admin reset` to use plain embeds (no image cards)
+- Fixed `/admin reboot` interaction flow: button now uses `deferUpdate()` then `editReply()` to prevent ERR-COMPONENT
+- Created `scripts/restart.bat` for Windows restart with detached batch process
+- Updated `performReboot()` to use platform-specific detached spawn (Windows batch vs POSIX shell)
+- Reboot now test-safe: skips spawn and exit when running under Jest
+- Added tests for admin add (validates User option and prevents self-promotion)
+- Updated reboot test to mock `spawn` instead of deprecated `execFile`
+
+2025-10-10 — Test-safe reboot
+- Added env helpers; logger is quiet under Jest
+- `performReboot()` skips timers and `process.exit` when tests run
+- Removed post-reply "Goodbye 👋" branch to avoid late logs
+- Jest config loads a tiny setup file to drop incidental `console.info`
+
+2025-10-10 — Tests green: ESM Jest + numeric wallet
+- ESM tests now `import { jest } from '@jest/globals'` where needed.
+- Wallet API returns raw integers (bigint) only; no string concatenation.
+- DB writes use integer values to satisfy NOT NULL constraints.
+- Optional test setup reduces noisy migration logs.
+
+2025-10-09 — Compact amounts with exact reveal
+- Added BigInt-safe `describeAmount`, `renderAmountInline`, and `componentsForExact`
+- Buttons: 🔎 Exact and Copy (ephemeral detail with scientific notation and unit legend)
+- Settings: `ui.show_exact_mode` ("off" | "inline" | "on_click"), `ui.compact_sigfigs` (3..5)
+- New admin controls: `/admin ui exact-mode …`, `/admin ui sigfigs …`
+- Applied across balance/give/take/daily/games/leaderboards/messages
+
+2025-10-09 — Project-wide compact balance formatting
+- Added bigint-safe `formatBalance(value)` and `parseBalance(str)` up to centillion
+- Replaced all user-visible amounts across commands, games, and embeds
+- Decimal rule per tier: 1-digit→2dp, 2-digit→1dp, 3-digit→0dp (e.g., 1.00k, 10.0k, 100k)
+- No DB changes; display-only
+
 2025-10-09 — Dynamic status line
 - Presence now shows: "<n> games, <n> commands, across <n> lines of code"
 - Counts derive from command builders and a simple LOC scan of ./src
@@ -85,7 +169,7 @@ Roulette reads limits from guild_settings keys (roulette.*) with sane defaults, 
 Verified flows in dev-only mode: admin add/list/sync and roulette bets behave without schema errors
 
 ## 2025-10-09 — Dev-only gate supports multiple roles
-Added RG_DEVONLY_ROLES (comma-separated) and defaulted to 1425816468041236521,1425853114514411582
+Added RG_DEVONLY_ROLES (comma-separated) and defaulted to 1425816468041236521,142585311451451582
 
 Runtime exposes devOnlyRoles: Set<string>; middleware checks “any-of”
 
@@ -140,7 +224,7 @@ Verified both roles can execute commands; others receive the standard dev-only m
 - Added `000_core.sql` to create `_migrations`, `guild_settings`, and `guild_admins`
 - Per-guild migrator now creates `_migrations` if missing and applies pending files atomically
 - Run migrations immediately after opening each `data/guilds/{guildId}.db` and via a startup sweep
-- Router retries once after a missing-table error, then fails with `ERR-DB-SCHEMA` if still broken
+- Router retries once on "no such table", then fails gracefully with ERR-DB-SCHEMA
 - Verified on guild 1414225727179591712: commands execute after bootstrap
 
 ## 2025-10-09 — Per-guild migrate-on-open + core schema + router retry

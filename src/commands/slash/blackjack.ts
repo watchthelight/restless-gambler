@@ -13,6 +13,8 @@ import { adjustBalance, getBalance } from '../../economy/wallet.js';
 import { themedEmbed } from '../../ui/embeds.js';
 import { getGuildTheme } from '../../ui/theme.js';
 import { formatBolts } from '../../economy/currency.js';
+import { uiExactMode, uiSigFigs } from '../../game/config.js';
+import { renderAmountInline } from '../../util/amountRender.js';
 import { renderHands, handValueBJ } from '../../ui/cardsDisplay.js';
 import { dealInitial, hit as bjHit, stand as bjStand, doubleDown as bjDouble, handTotal, isBlackjack, settle } from '../../games/blackjack/engine.js';
 import type { Card, BJState } from '../../games/blackjack/types.js';
@@ -157,7 +159,11 @@ function ensureTimeout(guildId: string, channelId: string, userId: string, clien
           const theme = getGuildTheme(guildId);
           const bal = getBalance(guildId, userId);
           const delta = result.payout - state.bet;
-          const outcome = delta > 0 ? `Auto-stand: You won +${formatBolts(delta)}. New balance: ${formatBolts(bal)}` : delta === 0 ? `Auto-stand due to inactivity. Push. Bet refunded.` : `Auto-stand: You lost ${formatBolts(-delta)}. New balance: ${formatBolts(bal)}`;
+          const db = getGuildDb(guildId);
+          const mode = uiExactMode(db, "guild");
+          const sig = uiSigFigs(db);
+          const balText = mode === "inline" ? renderAmountInline(bal, sig) : formatBolts(bal);
+          const outcome = delta > 0 ? `Auto-stand: You won +${formatBolts(delta)}. New balance: ${balText}` : delta === 0 ? `Auto-stand due to inactivity. Push. Bet refunded.` : `Auto-stand: You lost ${formatBolts(-delta)}. New balance: ${balText}`;
           const themeEmbed = themedEmbed(theme, '🂡 Blackjack', outcome);
           await msg.edit({ embeds: [themeEmbed], components: [] });
         } catch { }
@@ -181,7 +187,13 @@ export async function execute(i: ChatInputCommandInteraction) {
     const v = validateBet(bet, limits);
     if (!v.ok) { await i.reply({ content: v.reason }); return; }
     const bal = getBalance(guildId, userId);
-    if (bal < bet) { await i.reply({ content: `Insufficient balance (${formatBolts(bal)}).` }); return; }
+    if (bal < bet) {
+      const db = getGuildDb(guildId);
+      const mode = uiExactMode(db, "guild");
+      const sig = uiSigFigs(db);
+      const balText = mode === "inline" ? renderAmountInline(bal, sig) : formatBolts(bal);
+      await i.reply({ content: `Insufficient balance (${balText}).` }); return;
+    }
     // Prevent concurrent session
     const active = loadActive(guildId, userId);
     if (active) {
@@ -207,7 +219,10 @@ export async function execute(i: ChatInputCommandInteraction) {
       if (session) settleSession(db, session.id);
       const delta = result.payout - bet;
       const balNow = getBalance(guildId, userId);
-      const headline = delta > 0 ? `Blackjack! +${formatBolts(delta)}\nNew balance: ${formatBolts(balNow)}` : delta === 0 ? `Push. Bet refunded.\nNew balance: ${formatBolts(balNow)}` : `You lost ${formatBolts(-delta)}.\nNew balance: ${formatBolts(balNow)}`;
+      const mode = uiExactMode(db, "guild");
+      const sig = uiSigFigs(db);
+      const balText = mode === "inline" ? renderAmountInline(balNow, sig) : formatBolts(balNow);
+      const headline = delta > 0 ? `Blackjack! +${formatBolts(delta)}\nNew balance: ${balText}` : delta === 0 ? `Push. Bet refunded.\nNew balance: ${balText}` : `You lost ${formatBolts(-delta)}.\nNew balance: ${balText}`;
       await renderAndReply(i, state, { revealDealer: true, headline, finished: true, disableDouble: true });
     }
     console.info(JSON.stringify({ msg: 'blackjack', action: 'start', guild_id: guildId, channel_id: channelId, user_id: userId, bet }));
@@ -231,12 +246,20 @@ export async function execute(i: ChatInputCommandInteraction) {
       settleSession(db, session.id);
       const delta = result.payout - state.bet;
       const balNow = getBalance(guildId, userId);
-      const headline = delta > 0 ? `You won +${formatBolts(delta)}!!!\nNew balance: ${formatBolts(balNow)}` : delta === 0 ? `Push. Bet refunded.\nNew balance: ${formatBolts(balNow)}` : `You lost ${formatBolts(-delta)}.\nNew balance: ${formatBolts(balNow)}`;
+      const mode = uiExactMode(db, "guild");
+      const sig = uiSigFigs(db);
+      const balText = mode === "inline" ? renderAmountInline(balNow, sig) : formatBolts(balNow);
+      const headline = delta > 0 ? `You won +${formatBolts(delta)}!!!\nNew balance: ${balText}` : delta === 0 ? `Push. Bet refunded.\nNew balance: ${balText}` : `You lost ${formatBolts(-delta)}.\nNew balance: ${balText}`;
       await renderAndReply(i, state, { revealDealer: true, disableDouble: true, finished: true, headline });
     } else if (sub === 'double') {
       // Must have funds to double
       const bal = getBalance(guildId, userId);
-      if (bal < state.bet) { await i.reply({ content: `Insufficient funds to double (${formatBolts(bal)}).` }); return; }
+      if (bal < state.bet) {
+        const mode = uiExactMode(db, "guild");
+        const sig = uiSigFigs(db);
+        const balText = mode === "inline" ? renderAmountInline(bal, sig) : formatBolts(bal);
+        await i.reply({ content: `Insufficient funds to double (${balText}).` }); return;
+      }
       // Charge extra bet
       await adjustBalance(guildId, userId, -state.bet, 'blackjack:double');
       bjDouble(state);
@@ -245,7 +268,10 @@ export async function execute(i: ChatInputCommandInteraction) {
       settleSession(db, session.id);
       const delta = result.payout - state.bet * 2;
       const balNow = getBalance(guildId, userId);
-      const headline = delta > 0 ? `You won +${formatBolts(delta)}!!!\nNew balance: ${formatBolts(balNow)}` : delta === 0 ? `Push. Bet refunded.\nNew balance: ${formatBolts(balNow)}` : `You lost ${formatBolts(-delta)}.\nNew balance: ${formatBolts(balNow)}`;
+      const mode = uiExactMode(db, "guild");
+      const sig = uiSigFigs(db);
+      const balText = mode === "inline" ? renderAmountInline(balNow, sig) : formatBolts(balNow);
+      const headline = delta > 0 ? `You won +${formatBolts(delta)}!!!\nNew balance: ${balText}` : delta === 0 ? `Push. Bet refunded.\nNew balance: ${balText}` : `You lost ${formatBolts(-delta)}.\nNew balance: ${balText}`;
       await renderAndReply(i, state, { revealDealer: true, disableDouble: true, finished: true, headline });
     }
     console.info(JSON.stringify({ msg: 'blackjack', action: sub, guild_id: guildId, channel_id: channelId, user_id: userId }));

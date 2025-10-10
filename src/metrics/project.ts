@@ -70,7 +70,10 @@ export async function updateBotPresence(client: Client, log = console) {
             activities: [{ name: line, type: ActivityType.Playing }],
             status: "online",
         });
-        log.info?.({ msg: "presence_updated", line });
+        // Only log in verbose mode
+        if (process.env.VERBOSE === '1' || process.env.DEBUG === '1') {
+            log.info?.({ msg: "presence_updated", line });
+        }
     } catch (e: any) {
         log.warn?.({ msg: "presence_update_failed", err: String(e) });
     }

@@ -1,4 +1,5 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ButtonInteraction, REST } from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ButtonInteraction, REST, MessageFlags } from 'discord.js';
+import { spawn } from 'node:child_process';
 import { addGuildAdmin, audit, isSuperAdmin, removeGuildAdmin, requireAdmin, requireSuper } from '../../admin/roles.js';
 import { themedEmbed } from '../../ui/embeds.js';
 import { getGuildTheme } from '../../ui/theme.js';
@@ -11,7 +12,38 @@ import { ensureSuperAdminsSchema, superAdminInsertSQL } from '../../db/adminSche
 import { syncAll, listGlobal, listGuild, purgeGuildCommands } from '../../registry/sync.js';
 import { updateBotPresence } from "../../metrics/project.js";
 import { runAdminAddNormal, runAdminAddSuper } from './add.js';
+import { formatBolts } from '../../economy/currency.js';
+import { setKV, uiExactMode, uiSigFigs } from '../../game/config.js';
+import { renderAmountInline, componentsForExact } from '../../util/amountRender.js';
+import { isTestEnv } from '../../util/env.js';
 import log from '../../cli/logger.js';
+
+export async function performReboot(): Promise<void> {
+  // In tests, DO NOT schedule timers or exit the process.
+  if (isTestEnv()) return;
+
+  // Platform-specific restart
+  if (process.platform === 'win32') {
+    // Windows: use detached batch script
+    const scriptPath = 'scripts\\restart.bat';
+    spawn('cmd', ['/c', scriptPath], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true
+    }).unref();
+  } else {
+    // POSIX: simple pkill and restart
+    spawn('sh', ['-c', 'pkill -f "dist/index.js"; nohup node dist/index.js >/dev/null 2>&1 &'], {
+      detached: true,
+      stdio: 'ignore'
+    }).unref();
+  }
+
+  // Defer exit slightly so Discord can flush replies
+  setTimeout(() => {
+    try { process.exit(0); } catch { }
+  }, 300);
+}
 
 export const data = new SlashCommandBuilder()
   .setName('admin')
@@ -22,7 +54,13 @@ export const data = new SlashCommandBuilder()
   .addSubcommand((s) => s.setName('list').setDescription('List admins'))
   .addSubcommand((s) => s.setName('whoami').setDescription('Show your role'))
   .addSubcommand((s) => s.setName('reboot').setDescription('Reboot the bot (Admin+)'))
-  .addSubcommand((s) => s.setName('give').setDescription('Add admin for this guild (alias for add)').addUserOption((o) => o.setName('user').setDescription('Target user').setRequired(true)))
+  .addSubcommand((s) =>
+    s
+      .setName('give')
+      .setDescription('Admin: give currency to a user')
+      .addUserOption((o) => o.setName('user').setDescription('Target user').setRequired(true))
+      .addIntegerOption((o) => o.setName('amount').setDescription('Amount to add').setRequired(true).setMinValue(1)),
+  )
   .addSubcommand((s) =>
     s
       .setName('take')
@@ -47,13 +85,67 @@ export const data = new SlashCommandBuilder()
   .addSubcommand((s) =>
     s
       .setName('refresh-status')
-      .setDescription('Recompute counts and update the bot presence'));
+      .setDescription('Recompute counts and update the bot presence'))
+  .addSubcommandGroup(group =>
+    group.setName("ui")
+      .setDescription("UI preferences")
+      .addSubcommand(ss =>
+        ss.setName("exact-mode")
+          .setDescription("How to show precise amounts")
+          .addStringOption(o => o.setName("mode").setDescription("off | inline | on_click").setRequired(true)
+            .addChoices(
+              { name: "off", value: "off" },
+              { name: "inline", value: "inline" },
+              { name: "on_click", value: "on_click" }))
+          .addStringOption(o => o.setName("scope").setDescription("guild | user").addChoices(
+            { name: "guild", value: "guild" }, { name: "user", value: "user" }))
+          .addUserOption(o => o.setName("user").setDescription("Only if scope=user")))
+      .addSubcommand(ss =>
+        ss.setName("sigfigs")
+          .setDescription("Compact significant figures (3..5)")
+          .addIntegerOption(o => o.setName("n").setDescription("3..5").setRequired(true))));
 
 export async function execute(interaction: ChatInputCommandInteraction) {
-  const sub = interaction.options.getSubcommand(true);
-  if (sub === 'add' || sub === 'give') {
+  const sub = interaction.options.getSubcommandGroup(false) || interaction.options.getSubcommand(true);
+  const subsub = interaction.options.getSubcommand(false);
+  if (sub === 'add') {
     await requireAdmin(interaction);
     return runAdminAddNormal(interaction, { adminDb: getGlobalAdminDb(), guildDb: getGuildDb(interaction.guildId!), log });
+  }
+  else if (sub === 'give') {
+    await requireAdmin(interaction);
+    const user = interaction.options.getUser('user', true);
+    const amount = interaction.options.getInteger('amount', true);
+    if (amount <= 0) { await interaction.reply({ content: 'Amount must be positive.' }); return; }
+    const { getBalance, adjustBalance } = await import('../../economy/wallet.js');
+    const current = getBalance(interaction.guildId!, user.id);
+    // ensure user exists even if current=0
+    const { getUserMeta } = await import('../../util/userMeta.js');
+    await getUserMeta(interaction.client, interaction.guildId!, user.id);
+    const newBal = await adjustBalance(interaction.guildId!, user.id, amount, 'admin:give');
+    const theme = getGuildTheme(interaction.guildId);
+    const ctx = { guildDb: getGuildDb(interaction.guildId!) };
+    const mode = uiExactMode(ctx.guildDb, "guild");
+    const sig = uiSigFigs(ctx.guildDb);
+    let amountText: string;
+    let balanceText: string;
+    if (mode === "inline") {
+      amountText = renderAmountInline(amount, sig);
+      balanceText = renderAmountInline(newBal, sig);
+    } else if (mode === "on_click") {
+      const { text: at, row: ar } = componentsForExact(amount, sig);
+      const { text: bt, row: br } = componentsForExact(newBal, sig);
+      amountText = at;
+      balanceText = bt;
+      // For simplicity, use the balance row, but since it's one message, perhaps combine or use separate.
+      // For now, just use text.
+    } else {
+      amountText = formatBolts(amount);
+      balanceText = formatBolts(newBal);
+    }
+    const embed = themedEmbed(theme, 'Funds Added', `${user.tag} +${amountText}`).setDescription(`New balance: ${balanceText}`);
+    console.log(JSON.stringify({ msg: 'admin_action', action: 'give', target: user.id, amount: amount, admin: interaction.user.id }));
+    await interaction.reply({ embeds: [embed] });
   }
   else if (sub === 'super-add') {
     return runAdminAddSuper(interaction, { adminDb: getGlobalAdminDb(), guildDb: getGuildDb(interaction.guildId!), log });
@@ -64,15 +156,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const userId = extractUserId(input);
     if (!isValidSnowflake(userId)) {
       await interaction.reply({
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
         content: "Invalid user. Provide a Discord ID or mention (e.g. `<@123456789012345678>`).",
       }).catch(() => { });
       return;
     }
     if (userId === '697169405422862417') {
       const theme = getGuildTheme(interaction.guildId);
-      const card = await generateCard({ layout: 'Notice', theme, payload: { title: 'Access Denied', message: 'Cannot remove Super Admin.' } });
-      await interaction.reply({ embeds: [themedEmbed(theme, 'Access Denied', 'Cannot remove Super Admin.').setImage(`attachment://${card.filename}`)], files: [new AttachmentBuilder(card.buffer, { name: card.filename })] });
+      const embed = themedEmbed(theme, 'Access Denied', 'Cannot remove Super Admin.');
+      await interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [embed] });
       return;
     }
     try {
@@ -80,10 +172,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       adminDb.prepare('DELETE FROM super_admins WHERE user_id = ?').run(userId);
       audit(interaction.user.id, 'admin_remove', userId);
       const theme = getGuildTheme(interaction.guildId);
-      await interaction.reply({ embeds: [themedEmbed(theme, 'Super Admin Removed', `<@${userId}>`)] });
+      const embed = themedEmbed(theme, 'Super Admin Removed', `<@${userId}>`);
+      await interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [embed] });
     } catch (e: any) {
       console.error('admin_remove_error', e?.message || e, userId);
-      await interaction.reply({ ephemeral: true, content: 'Failed to remove super admin (ERR-ADMIN-REMOVE).' }).catch(() => { });
+      await interaction.reply({ flags: MessageFlags.Ephemeral, content: 'Failed to remove super admin (ERR-ADMIN-REMOVE).' }).catch(() => { });
     }
   } else if (sub === 'list') {
     await requireAdmin(interaction);
@@ -110,20 +203,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     const adminLines = rows.map(r => {
       const ts = Number(r.added_at) * 1000;
-      const when = Number.isFinite(ts) ? new Date(ts).toISOString() : "unknown";
+      const when = Number.isFinite(ts) ? new Date(ts).toISOString().split('T')[0] : "unknown";
       return `• <@${r.user_id}> — ${when}`;
     });
 
-    const body = [
-      "**Admin List**",
-      "",
-      `Super admin: ${superLine}`,
-      "",
-      rows.length ? "Current admins:" : "No normal admins yet.",
-      ...(rows.length ? ["", ...adminLines] : []),
-    ].join("\n");
+    const theme = getGuildTheme(interaction.guildId);
+    const embed = themedEmbed(theme, 'Admin List')
+      .addFields(
+        { name: 'Super Admin', value: superLine, inline: false },
+        { name: 'Current Admins', value: adminLines.length ? adminLines.join('\n') : 'No normal admins yet.', inline: false }
+      );
 
-    await interaction.reply({ ephemeral: true, content: body });
+    await interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [embed] });
   } else if (sub === 'whoami') {
     const role = isSuperAdmin(interaction.user.id) ? 'SUPER' : 'ADMIN';
     const theme = getGuildTheme(interaction.guildId);
@@ -136,22 +227,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const theme = getGuildTheme(interaction.guildId);
     const now = Date.now();
     const customId = `admin:reboot:confirm:${interaction.user.id}:${now}`;
-    const card = await generateCard({ layout: 'Notice', theme, payload: { title: 'Confirm Reboot', message: '⚠️ This will restart the bot for all servers. Press confirm within 10 seconds.' } });
-    const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-    const embed = themedEmbed(theme, 'Reboot', 'Confirm to restart').setImage(`attachment://${card.filename}`);
+    const embed = themedEmbed(theme, 'Confirm Reboot', '⚠️ This will restart the bot for all servers.\nPress confirm within 10 seconds.');
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId(customId).setStyle(ButtonStyle.Danger).setLabel('Confirm Reboot'),
     );
-    await respondOnce(interaction, () => ({ embeds: [embed], files: [file], components: [row] }));
+    await respondOnce(interaction, () => ({ flags: MessageFlags.Ephemeral, embeds: [embed], components: [row] }));
   }
   else if (sub === 'sync-commands') {
     await requireAdmin(interaction);
     const appId = process.env.APP_ID || process.env.DISCORD_APP_ID || process.env.CLIENT_ID;
     if (!appId) {
-      await interaction.reply({ ephemeral: true, content: "Cannot sync commands: APP_ID missing. Set APP_ID or DISCORD_APP_ID (or CLIENT_ID)." }).catch(() => { });
+      await interaction.reply({ flags: MessageFlags.Ephemeral, content: "Cannot sync commands: APP_ID missing. Set APP_ID or DISCORD_APP_ID (or CLIENT_ID)." }).catch(() => { });
       return;
     }
-    await interaction.deferReply({ ephemeral: true }).catch(() => { });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => { });
     try {
       const rest = new REST({ version: "10" }).setToken(process.env.BOT_TOKEN!);
       const result = await syncAll(rest, interaction.client, log);
@@ -173,16 +262,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const rest = new REST({ version: "10" }).setToken(process.env.BOT_TOKEN!);
     const appId = process.env.APP_ID || process.env.DISCORD_APP_ID || process.env.CLIENT_ID || "(unset)";
     const globals = await listGlobal(rest);
-    const head = globals.slice(0, 10).map(c => `• ${c.name} (${c.id})`).join("\n") || "(none)";
-    await interaction.reply({
-      ephemeral: true,
-      content: [
-        "**App Info**",
-        `appId: ${appId}`,
-        `global commands: ${globals.length}`,
-        head
-      ].join("\n")
-    });
+    const head = globals.slice(0, 10).map(c => `${c.name} (\`${c.id}\`)`).join("\n") || "(none)";
+    const theme = getGuildTheme(interaction.guildId);
+    const embed = themedEmbed(theme, 'App Info')
+      .addFields(
+        { name: 'App ID', value: `\`${appId}\``, inline: false },
+        { name: 'Global Commands', value: `${globals.length}`, inline: false },
+        { name: 'First 10 Commands', value: head, inline: false }
+      );
+    await interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [embed] });
   }
   else if (sub === 'list-commands') {
     await requireAdmin(interaction);
@@ -190,21 +278,19 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const gid = interaction.guildId!;
     const globals = await listGlobal(rest);
     const guilds = await listGuild(rest, gid);
-    await interaction.reply({
-      ephemeral: true,
-      content: [
-        "**Command Inventory**",
-        `global: ${globals.length}`,
-        `guild(${gid}): ${guilds.length}`,
-        "",
-        "guild-scoped:",
-        ...(guilds.length ? guilds.map(x => `• ${x.name} (${x.id})`) : ["(none)"])
-      ].join("\n")
-    });
+    const guildScoped = guilds.length ? guilds.map(x => `• ${x.name} (\`${x.id}\`)`).join('\n') : "(none)";
+    const theme = getGuildTheme(interaction.guildId);
+    const embed = themedEmbed(theme, 'Command Inventory')
+      .addFields(
+        { name: 'Global', value: `${globals.length}`, inline: true },
+        { name: `Guild (${gid})`, value: `${guilds.length}`, inline: true },
+        { name: 'Guild-Scoped Commands', value: guildScoped, inline: false }
+      );
+    await interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [embed] });
   }
   else if (sub === 'force-purge') {
     await requireAdmin(interaction);
-    await interaction.deferReply({ ephemeral: true }).catch(() => { });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => { });
     const rest = new REST({ version: "10" }).setToken(process.env.BOT_TOKEN!);
     const appId = process.env.APP_ID || process.env.DISCORD_APP_ID || process.env.CLIENT_ID!;
     const purged: string[] = [];
@@ -212,9 +298,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const c = await purgeGuildCommands(rest, appId, gid);
       purged.push(`${gid}(${c})`);
     }
-    await interaction.editReply({
-      content: ["purge complete", `guilds: ${purged.join(", ") || "none"}`].join("\n")
-    });
+    const theme = getGuildTheme(interaction.guildId);
+    const embed = themedEmbed(theme, 'Purge Complete')
+      .addFields({ name: 'Guilds', value: purged.join(', ') || 'none', inline: false });
+    await interaction.editReply({ embeds: [embed] });
   }
   // Admin economy controls
   else if (sub === 'take') {
@@ -224,14 +311,31 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (amount <= 0) { await interaction.reply({ content: 'Amount must be positive.' }); return; }
     const { getBalance, adjustBalance } = await import('../../economy/wallet.js');
     const current = getBalance(interaction.guildId!, user.id);
-    const delta = -Math.min(amount, current);
+    const delta = -Math.min(amount, Number(current));
     // ensure user exists even if current=0
     const { getUserMeta } = await import('../../util/userMeta.js');
     await getUserMeta(interaction.client, interaction.guildId!, user.id);
     const newBal = await adjustBalance(interaction.guildId!, user.id, delta, 'admin:take');
     const actualTaken = -delta;
     const theme = getGuildTheme(interaction.guildId);
-    const embed = themedEmbed(theme, 'Funds Removed', `${user.tag} -${actualTaken}`).setDescription(`New balance: ${newBal}`);
+    const ctx = { guildDb: getGuildDb(interaction.guildId!) };
+    const mode = uiExactMode(ctx.guildDb, "guild");
+    const sig = uiSigFigs(ctx.guildDb);
+    let takenText: string;
+    let balanceText: string;
+    if (mode === "inline") {
+      takenText = renderAmountInline(actualTaken, sig);
+      balanceText = renderAmountInline(newBal, sig);
+    } else if (mode === "on_click") {
+      const { text: tt, row: tr } = componentsForExact(actualTaken, sig);
+      const { text: bt, row: br } = componentsForExact(newBal, sig);
+      takenText = tt;
+      balanceText = bt;
+    } else {
+      takenText = formatBolts(actualTaken);
+      balanceText = formatBolts(newBal);
+    }
+    const embed = themedEmbed(theme, 'Funds Removed', `${user.tag} -${takenText}`).setDescription(`New balance: ${balanceText}`);
     console.log(JSON.stringify({ msg: 'admin_action', action: 'take', target: user.id, amount: actualTaken, admin: interaction.user.id }));
     await interaction.reply({ embeds: [embed] });
   }
@@ -250,15 +354,44 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
     tx();
     const theme = getGuildTheme(interaction.guildId);
-    const embed = themedEmbed(theme, 'Account Reset', `${user.tag} reset to 0 balance`);
+    const ctx = { guildDb: getGuildDb(interaction.guildId!) };
+    const mode = uiExactMode(ctx.guildDb, "guild");
+    const sig = uiSigFigs(ctx.guildDb);
+    let balanceText: string;
+    if (mode === "inline") {
+      balanceText = renderAmountInline(0, sig);
+    } else if (mode === "on_click") {
+      const { text: bt, row: br } = componentsForExact(0, sig);
+      balanceText = bt;
+    } else {
+      balanceText = formatBolts(0);
+    }
+    const embed = themedEmbed(theme, 'Account Reset', `${user.tag} reset to ${balanceText} balance`);
     console.log(JSON.stringify({ msg: 'admin_action', action: 'reset', target: user.id, amount: 0, admin: interaction.user.id }));
     await interaction.reply({ embeds: [embed] });
   }
   else if (sub === 'refresh-status') {
     await requireAdmin(interaction);
-    await interaction.deferReply({ ephemeral: true }).catch(() => { });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => { });
     await updateBotPresence(interaction.client, console);
     await interaction.editReply({ content: "Status refreshed." }).catch(() => { });
+  }
+  else if (sub === 'ui') {
+    await requireAdmin(interaction);
+    const ctx = { guildDb: getGuildDb(interaction.guildId!) };
+    if (subsub === 'exact-mode') {
+      const mode = interaction.options.getString("mode", true) as any;
+      const scope = (interaction.options.getString("scope") || "guild") as "guild" | "user";
+      const user = interaction.options.getUser("user")?.id;
+      const key = scope === "user" && user ? `ui.show_exact_mode.user.${user}` : "ui.show_exact_mode";
+      setKV(ctx.guildDb, key, mode);
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `Exact mode set to ${mode} (${scope}).` });
+    }
+    if (subsub === 'sigfigs') {
+      const n = interaction.options.getInteger("n", true);
+      setKV(ctx.guildDb, "ui.compact_sigfigs", String(n));
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `Sig figs set to ${n}.` });
+    }
   }
 }
 
@@ -293,17 +426,13 @@ export async function handleButton(interaction: ButtonInteraction) {
   await requireAdmin(interaction);
 
   try {
-    if (!interaction.deferred && !interaction.replied) {
-      await interaction.reply({ ephemeral: true, content: "Reboot requested. Shutting down..." });
-    } else {
-      await interaction.editReply?.({ content: "Reboot requested. Shutting down..." }).catch(() => { });
-    }
+    // Use deferUpdate to acknowledge button press without showing "interaction failed"
+    await interaction.deferUpdate().catch(() => { });
+    const theme = getGuildTheme(interaction.guildId);
+    const embed = themedEmbed(theme, 'Reboot Requested', 'Shutting down...');
+    await interaction.editReply({ embeds: [embed], components: [] }).catch(() => { });
   } catch { }
   map.set(gKey, now);
   map.set(uKey, now);
-  // give Discord a moment to flush the reply
-  setTimeout(() => {
-    try { log.info("admin_reboot_exit"); } catch { }
-    process.exit(0);
-  }, 500);
+  await performReboot();
 }

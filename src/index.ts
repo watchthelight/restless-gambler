@@ -12,7 +12,18 @@ import { VERBOSE, vlog } from './util/verbose.js';
 import { resolveRuntime } from './config/runtime.js';
 import { updateBotPresence } from "./metrics/project.js";
 
-dotenv.config();
+// Suppress console output temporarily while loading dotenv (to hide emoji tips)
+const originalLog = console.log;
+const originalError = console.error;
+const originalWarn = console.warn;
+const suppress = () => {};
+console.log = suppress;
+console.error = suppress;
+console.warn = suppress;
+dotenv.config({ override: false, debug: false });
+console.log = originalLog;
+console.error = originalError;
+console.warn = originalWarn;
 
 const cfg = resolveRuntime();
 process.env.LOG_LEVEL = cfg.logLevel;
@@ -21,17 +32,21 @@ process.env.CLI_BANNER = cfg.pretty ? 'on' : 'off';
 process.env.NO_COLOR = cfg.pretty ? '0' : '1';
 
 async function main() {
-  // Early boot snapshot
-  try {
-    console.log(JSON.stringify({ msg: 'boot', node: process.versions.node, platform: process.platform, pid: process.pid, cwd: process.cwd(), argv: process.argv, env: { CLIENT_ID: !!process.env.CLIENT_ID, DEV_GUILD_ID: process.env.DEV_GUILD_ID || null, REGISTER_ON_START: process.env.REGISTER_ON_START || 'unset' } }));
-  } catch { }
+  // Early boot snapshot (only in verbose mode)
+  if (VERBOSE) {
+    try {
+      console.log(JSON.stringify({ msg: 'boot', node: process.versions.node, platform: process.platform, pid: process.pid, cwd: process.cwd(), argv: process.argv, env: { CLIENT_ID: !!process.env.CLIENT_ID, DEV_GUILD_ID: process.env.DEV_GUILD_ID || null, REGISTER_ON_START: process.env.REGISTER_ON_START || 'unset' } }));
+    } catch { }
+  }
   process.on('uncaughtException', (e: any) => vlog({ msg: 'uncaughtException', name: e?.name, message: e?.message, stack: (e?.stack || '').split('\n').slice(0, 10) }));
   process.on('unhandledRejection', (reason: any) => { log.error({ msg: "unhandledRejection", reason: String(reason) }); });
-  // Boot summary
-  try {
-    const scope = 'guild';
-    console.log(JSON.stringify({ msg: 'boot', node: process.versions.node, discordjs: '14', scope, devGuildId: process.env.DEV_GUILD_ID || null, devOnly: cfg.devOnly, devOnlyRoles: Array.from(cfg.devOnlyRoles), registerOnStart: String(process.env.REGISTER_ON_START || '').toLowerCase() === 'true' }));
-  } catch { }
+  // Boot summary (only in verbose mode)
+  if (VERBOSE) {
+    try {
+      const scope = 'guild';
+      console.log(JSON.stringify({ msg: 'boot', node: process.versions.node, discordjs: '14', scope, devGuildId: process.env.DEV_GUILD_ID || null, devOnly: cfg.devOnly, devOnlyRoles: Array.from(cfg.devOnlyRoles), registerOnStart: String(process.env.REGISTER_ON_START || '').toLowerCase() === 'true' }));
+    } catch { }
+  }
   const token = process.env.BOT_TOKEN;
   if (!token || token.trim() === '') {
     ui.say('BOT_TOKEN is missing. Create a .env file (copy from .env.example) and set BOT_TOKEN.', 'error');
@@ -49,19 +64,39 @@ async function main() {
       anyClient.rest.on('response', (request: any, response: any) => vlog({ msg: 'rest', event: 'response', method: request?.method, url: request?.url, status: response?.status, ok: response?.ok }));
     }
   } catch { }
-  // Ready hooks
+  // Ready hooks (deprecation warning suppressed via --no-deprecation flag)
   client.once('ready', async () => {
-    log.info({ msg: 'ready', scope: 'discord' });
     // Update presence once on boot
     await updateBotPresence(client, console);
-    // Optional: refresh every 10 minutes in case code/commands change at runtime
+
+    // Show ready message with stats
+    const guildCount = client.guilds.cache.size;
+    const { countCommands } = await import('./metrics/project.js');
+    const { getSlashCommands } = await import('./commands/slash/index.js');
+    const commandCount = countCommands();
+
+    // Count initialized databases
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const { getDbPaths } = await import('./db/connection.js');
+    const { data_dir } = getDbPaths();
+    let dbCount = 0;
+    if (fs.existsSync(data_dir)) {
+      dbCount = fs.readdirSync(data_dir).filter(f => f.endsWith('.db')).length;
+    }
+
+    ui.say(`Online across ${guildCount} ${guildCount === 1 ? 'server' : 'servers'}, ${commandCount} ${commandCount === 1 ? 'command' : 'commands'} registered and ${dbCount} ${dbCount === 1 ? 'database' : 'databases'} initialized. Waiting for input.`, 'success');
+
+    if (VERBOSE) {
+      log.info({ msg: 'ready', scope: 'discord', guilds: guildCount, commands: commandCount, databases: dbCount });
+    }
+
+    // Optional: refresh presence every 10 minutes
     const minutes = Number(process.env.STATUS_REFRESH_MINUTES ?? "10");
     if (Number.isFinite(minutes) && minutes > 0) {
       setInterval(() => { updateBotPresence(client, console); }, minutes * 60 * 1000);
     }
   });
-  // @ts-ignore optional future event
-  client.once('clientReady', () => log.debug({ msg: 'clientReady', scope: 'discord' }));
   let shuttingDown = false;
 
   const shutdown = async (_signal: string) => {
@@ -71,7 +106,7 @@ async function main() {
     try { await client.destroy(); } catch { }
     try { closeAll(); } catch { }
     s.succeed('Reboot requested');
-    ui.say('Goodbye 👋', 'dim');
+    ui.say('Goodbye', 'dim');
     process.exit(0);
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
@@ -82,7 +117,9 @@ async function main() {
   try {
     const strategy = process.env.REBOOT_CMD && process.env.REBOOT_CMD.trim().length > 0 ? 'external-cmd' : 'self-reexec';
     cfgStep.succeed('Config loaded');
-    log.info({ msg: 'Config loaded', scope: 'startup', data_dir: paths.data_dir, reboot_strategy: strategy });
+    if (VERBOSE) {
+      log.info({ msg: 'Config loaded', scope: 'startup', data_dir: paths.data_dir, reboot_strategy: strategy });
+    }
   } catch (e) {
     cfgStep.fail('Config load failed');
     throw e;

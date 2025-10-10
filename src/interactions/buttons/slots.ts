@@ -8,6 +8,9 @@ import { generateCard } from '../../ui/cardFactory.js';
 import { AttachmentBuilder } from 'discord.js';
 import { formatBolts } from '../../economy/currency.js';
 import { outcomeMessage, formatBolt } from '../../ui/outcome.js';
+import { uiExactMode, uiSigFigs } from '../../game/config.js';
+import { renderAmountInline } from '../../util/amountRender.js';
+import { getGuildDb } from '../../db/connection.js';
 
 export async function handleSlotsButton(interaction: ButtonInteraction) {
   const [prefix, action, userId, betStr] = interaction.customId.split(':');
@@ -20,8 +23,12 @@ export async function handleSlotsButton(interaction: ButtonInteraction) {
   if (!interaction.guildId) { await interaction.reply({ content: 'This bot only works in servers.' }); return; }
   const current = getBalance(interaction.guildId, userId);
   if (current < bet) {
+    const db = getGuildDb(interaction.guildId);
+    const mode = uiExactMode(db, "guild");
+    const sig = uiSigFigs(db);
+    const balText = mode === "inline" ? renderAmountInline(current, sig) : formatBolts(current);
     await interaction.reply({
-      content: `Insufficient balance for ${formatBolts(bet)}. Your balance is ${formatBolts(current)}.`,
+      content: `Insufficient balance for ${formatBolts(bet)}. Your balance is ${balText}.`,
     });
     return;
   }
@@ -39,8 +46,12 @@ export async function handleSlotsButton(interaction: ButtonInteraction) {
   });
   const file = new AttachmentBuilder(card.buffer, { name: card.filename });
   const headline = net > 0 ? outcomeMessage('win', net) : net < 0 ? outcomeMessage('loss', Math.abs(net)) : outcomeMessage('push');
+  const db = getGuildDb(interaction.guildId);
+  const mode = uiExactMode(db, "guild");
+  const sig = uiSigFigs(db);
+  const balText = mode === "inline" ? renderAmountInline(newBal, sig) : formatBolt(newBal);
   const embed = themedEmbed(theme, '🎰 Slots', `${headline}
-New balance: ${formatBolt(newBal)}`).setImage(
+New balance: ${balText}`).setImage(
     `attachment://${card.filename}`,
   );
   await interaction.editReply({ embeds: [embed], files: [file], components: [] });

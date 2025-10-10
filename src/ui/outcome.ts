@@ -1,7 +1,9 @@
+import { formatBalance } from "../util/formatBalance.js";
+
 export const BOLT = "🔩";
 
-export function formatBolt(n: number): string {
-  return `${n.toLocaleString()} ${BOLT}`;
+export function formatBolt(n: number | bigint): string {
+  return `${formatBalance(n)} ${BOLT}`;
 }
 
 export type Outcome = 'win' | 'loss' | 'push' | 'broke' | 'invalid';
@@ -23,6 +25,6 @@ export function outcomeMessage(kind: Outcome, amount?: number, extra?: string): 
 
 export function deltaBadge(n: number): string {
   const sign = n >= 0 ? '+' : '−';
-  return `${sign}${Math.abs(n).toLocaleString()} ${BOLT}`;
+  return `${sign}${formatBalance(Math.abs(n))} ${BOLT}`;
 }
 

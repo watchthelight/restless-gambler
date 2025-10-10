@@ -5,15 +5,15 @@ import { formatBolts } from '../economy/currency.js';
 import './fonts.js';
 
 type GameResultPayload =
-  | { kind: 'slots'; grid: string[][]; bet: number; payout: number; delta: number; balance: number }
-  | { kind: 'roulette'; number: number; color: string; bet: number; payout: number; delta: number; balance: number }
-  | { kind: 'blackjack'; dealer: string[]; player: string[]; bet: number; payout: number; delta: number; balance: number }
-  | { kind: 'holdem'; board: string[]; hero: string[]; bet: number; delta: number; balance: number };
+  | { kind: 'slots'; grid: string[][]; bet: number; payout: number; delta: number; balance: number | bigint }
+  | { kind: 'roulette'; number: number; color: string; bet: number; payout: number; delta: number; balance: number | bigint }
+  | { kind: 'blackjack'; dealer: string[]; player: string[]; bet: number; payout: number; delta: number; balance: number | bigint }
+  | { kind: 'holdem'; board: string[]; hero: string[]; bet: number; delta: number; balance: number | bigint };
 
 type ListPayload = { rows: { rank: number; user: string; value: number }[] };
 type NoticePayload = { title: string; message: string };
 
-type WalletPayload = { balance: number; title?: string; subtitle?: string };
+type WalletPayload = { balance: number | bigint; title?: string; subtitle?: string };
 
 export type CardOpts =
   | { layout: 'GameResult'; theme: Theme; payload: GameResultPayload }
@@ -34,9 +34,9 @@ export async function generateCard(opts: CardOpts): Promise<{ buffer: Buffer; fi
   }
 
   try {
-  const { createCanvas, loadImage } = canvasMod;
-  const width = 960;
-  const height = 540;
+    const { createCanvas, loadImage } = canvasMod;
+    const width = 960;
+    const height = 540;
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext('2d');
 
@@ -65,15 +65,15 @@ export async function generateCard(opts: CardOpts): Promise<{ buffer: Buffer; fi
     const panelY = pad + HEADER_H + 12;
     const panelW = width - pad * 2;
     const panelH = height - panelY - pad;
-  ctx.shadowColor = opts.theme.shadowRGBA;
-  ctx.shadowBlur = 24;
-  drawRoundedRect(ctx, panelX, panelY, panelW, panelH, 24, opts.theme.surface);
-  ctx.shadowBlur = 0;
+    ctx.shadowColor = opts.theme.shadowRGBA;
+    ctx.shadowBlur = 24;
+    drawRoundedRect(ctx, panelX, panelY, panelW, panelH, 24, opts.theme.surface);
+    ctx.shadowBlur = 0;
 
-  switch (opts.layout) {
-    case 'GameResult':
-      renderGameResult(ctx, opts);
-      break;
+    switch (opts.layout) {
+      case 'GameResult':
+        renderGameResult(ctx, opts);
+        break;
       case 'List':
         renderList(ctx, opts);
         break;
@@ -230,7 +230,7 @@ function renderList(ctx: any, opts: Extract<CardOpts, { layout: 'List' }>) {
     // Balance right
     ctx.textAlign = 'right';
     ctx.font = '600 16px "JetBrains Mono", monospace';
-    ctx.fillText(formatBolts(row.value, { compact: true }), 940, y - 6);
+    ctx.fillText(formatBolts(row.value), 940, y - 6);
     ctx.textAlign = 'left';
     y += 48;
   }

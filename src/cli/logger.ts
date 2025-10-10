@@ -2,15 +2,24 @@ import fs from 'node:fs';
 import path from 'node:path';
 import pino from 'pino';
 import { ui } from './ui.js';
+import { isTestEnv } from '../util/env.js';
 
 type Data = any;
 
 const logsDir = path.resolve('logs');
-try { fs.mkdirSync(logsDir, { recursive: true }); } catch {}
+try { fs.mkdirSync(logsDir, { recursive: true }); } catch { }
 
 const stream = pino.destination({ dest: path.join(logsDir, 'app.ndjson'), mkdir: true, sync: false });
 const level = process.env.LOG_LEVEL || 'info';
 const logger = pino({ level, base: undefined }, stream);
+
+const noop = () => { };
+const passthrough = {
+  info: (...a: any[]) => ui.say("info", ...a),
+  warn: (...a: any[]) => ui.say("warn", ...a),
+  error: (...a: any[]) => ui.say("error", ...a),
+};
+const quiet = { info: noop, warn: noop, error: noop };
 
 function info(msg: string, scope?: string, data?: Data) {
   if (process.env.QUIET !== '1' && !process.argv.includes('--quiet')) ui.say(msg, 'info');
@@ -38,6 +47,6 @@ function withScope(scope: string) {
   };
 }
 
-export const log = { info, warn, error, debug, withScope };
+export const log = isTestEnv() ? { ...quiet, debug, withScope } : { info, warn, error, debug, withScope };
 export default log;
 

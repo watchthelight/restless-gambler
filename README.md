@@ -1,9 +1,4 @@
-
-# Play-Money Casino Bot (Bolts)
-
-Discord bot offering play‑money minigames powered by Bolts (🔩). Node 20 LTS, TypeScript ESM (NodeNext), SQLite, modern card UI.
-
-## Quickstart
+## start
 
 - Prereqs: Node 20.x LTS, npm
 - Set env: `cp .env.example .env` and set `BOT_TOKEN`
@@ -17,7 +12,7 @@ Discord bot offering play‑money minigames powered by Bolts (🔩). Node 20 LTS
 
 ## Currency
 
-- Name: Bolts (🔩)
+- Bolts (🔩)
 - Displayed everywhere with the emoji, e.g., `1,000 🔩`
 
 ## Visibility

@@ -58,3 +58,14 @@ export class KeyedMutexes {
 export const userLocks = new KeyedMutexes();
 export const channelLocks = new KeyedMutexes();
 
+// Lightweight promise-chaining lock compatible with ad-hoc keys
+const _locks = new Map<string, Promise<void>>();
+export async function withLock(key: string, fn: () => Promise<void>) {
+  const prev = _locks.get(key) ?? Promise.resolve();
+  let release: () => void = () => {};
+  const next = prev.then(async () => {
+    try { await fn(); } finally { release(); }
+  });
+  _locks.set(key, next);
+  await new Promise<void>((res) => { release = () => { _locks.delete(key); res(); }; });
+}

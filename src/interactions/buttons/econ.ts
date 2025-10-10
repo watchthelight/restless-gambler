@@ -1,7 +1,12 @@
 import type { ButtonInteraction } from 'discord.js';
+import { MessageFlags } from 'discord.js';
 import { getGuildDb } from '../../db/connection.js';
 import { getGuildTheme } from '../../ui/theme.js';
 import { themedEmbed } from '../../ui/embeds.js';
+import { safeReply } from '../../interactions/reply.js';
+import { KeyedMutexes } from '../../util/locks.js';
+
+const messageLocks = new KeyedMutexes();
 
 export async function handleButton(interaction: ButtonInteraction) {
   const parts = interaction.customId.split(':');
@@ -9,7 +14,7 @@ export async function handleButton(interaction: ButtonInteraction) {
   if (parts[1] === 'resetme' && parts[2] === 'confirm') {
     const uid = parts[3];
     if (uid !== interaction.user.id) {
-      await interaction.reply({ content: 'This button is not for you.' });
+      await safeReply(interaction, { content: 'This button is not for you.', flags: MessageFlags.Ephemeral });
       return;
     }
     const created = parseInt(parts[4] || '0', 10);
@@ -17,20 +22,22 @@ export async function handleButton(interaction: ButtonInteraction) {
       await interaction.reply({ content: 'Confirmation expired. Run /resetme again.' });
       return;
     }
-    const db = getGuildDb(interaction.guildId!);
-    const now = Date.now();
-    const tx = db.transaction(() => {
-      const row = db.prepare('SELECT balance FROM balances WHERE user_id = ?').get(interaction.user.id) as { balance?: number } | undefined;
-      const cur = row?.balance ?? 0;
-      db.prepare('INSERT INTO balances(user_id, balance, updated_at) VALUES(?, 0, ?) ON CONFLICT(user_id) DO UPDATE SET balance=0, updated_at=excluded.updated_at').run(interaction.user.id, now);
-      if (cur !== 0) db.prepare('INSERT INTO transactions(user_id, delta, reason, created_at) VALUES (?,?,?,?)').run(interaction.user.id, -cur, 'self:reset', now);
-      db.prepare('DELETE FROM cooldowns WHERE user_id = ?').run(interaction.user.id);
+    await messageLocks.runExclusive(`econ:${interaction.message?.id || interaction.id}`, async () => {
+      await interaction.deferUpdate().catch(() => { });
+      const db = getGuildDb(interaction.guildId!);
+      const now = Date.now();
+      const tx = db.transaction(() => {
+        const row = db.prepare('SELECT balance FROM balances WHERE user_id = ?').get(interaction.user.id) as { balance?: number } | undefined;
+        const cur = row?.balance ?? 0;
+        db.prepare('INSERT INTO balances(user_id, balance, updated_at) VALUES(?, 0, ?) ON CONFLICT(user_id) DO UPDATE SET balance=0, updated_at=excluded.updated_at').run(interaction.user.id, now);
+        if (cur !== 0) db.prepare('INSERT INTO transactions(user_id, delta, reason, created_at) VALUES (?,?,?,?)').run(interaction.user.id, -cur, 'self:reset', now);
+        db.prepare('DELETE FROM cooldowns WHERE user_id = ?').run(interaction.user.id);
+      });
+      tx();
+      const theme = getGuildTheme(interaction.guildId);
+      const embed = themedEmbed(theme, 'Reset Complete', 'Your balance and cooldowns have been reset.');
+      console.log(JSON.stringify({ msg: 'econ', event: 'resetme', guildId: interaction.guildId, userId: interaction.user.id }));
+      await interaction.editReply({ embeds: [embed], components: [] }).catch(() => { });
     });
-    tx();
-    const theme = getGuildTheme(interaction.guildId);
-    const embed = themedEmbed(theme, 'Reset Complete', 'Your balance and cooldowns have been reset.');
-    console.log(JSON.stringify({ msg: 'econ', event: 'resetme', guildId: interaction.guildId, userId: interaction.user.id }));
-    await interaction.reply({ embeds: [embed] });
   }
 }
-

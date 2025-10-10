@@ -2,6 +2,7 @@ import { SlashCommandBuilder, ChatInputCommandInteraction, AttachmentBuilder, Ac
 import { spawn } from 'node:child_process';
 import { addGuildAdmin, audit, isSuperAdmin, removeGuildAdmin, requireAdmin, requireSuper } from '../../admin/roles.js';
 import { themedEmbed } from '../../ui/embeds.js';
+import { safeReply } from '../../interactions/reply.js';
 import { getGuildTheme } from '../../ui/theme.js';
 import { generateCard } from '../../ui/cardFactory.js';
 import { getGuildDb, getGlobalAdminDb } from '../../db/connection.js';
@@ -399,7 +400,7 @@ export async function handleButton(interaction: ButtonInteraction) {
   const [prefix, action, key, uid, ts] = interaction.customId.split(':');
   if (prefix !== 'admin' || action !== 'reboot' || key !== 'confirm') return;
   if (interaction.user.id !== uid) {
-    await interaction.reply({ content: 'This button is not for you.' });
+    await safeReply(interaction, { content: 'This button is not for you.', flags: MessageFlags.Ephemeral });
     return;
   }
   // cooldowns
@@ -409,17 +410,17 @@ export async function handleButton(interaction: ButtonInteraction) {
   (global as any).__rebootCooldowns = (global as any).__rebootCooldowns || new Map<string, number>();
   const map: Map<string, number> = (global as any).__rebootCooldowns;
   if (map.get(gKey) && now - (map.get(gKey) as number) < 60_000) {
-    await interaction.reply({ content: 'Reboot recently initiated in this server. Please wait.' });
+    await safeReply(interaction, { content: 'Reboot recently initiated in this server. Please wait.', flags: MessageFlags.Ephemeral });
     return;
   }
   if (map.get(uKey) && now - (map.get(uKey) as number) < 5_000) {
-    await interaction.reply({ content: 'Please wait a few seconds before confirming again.' });
+    await safeReply(interaction, { content: 'Please wait a few seconds before confirming again.', flags: MessageFlags.Ephemeral });
     return;
   }
   const pressedAt = Date.now();
   const createdAt = parseInt(ts, 10);
   if (!Number.isFinite(createdAt) || pressedAt - createdAt > 10_000) {
-    await interaction.reply({ content: 'Reboot confirmation expired. Please try again.' });
+    await safeReply(interaction, { content: 'Reboot confirmation expired. Please try again.', flags: MessageFlags.Ephemeral });
     return;
   }
   // Double-check admin rights at confirm time

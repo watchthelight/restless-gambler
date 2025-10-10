@@ -36,16 +36,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const db = getGuildDb(interaction.guildId);
     const { minBet, maxBet } = slotsLimits(db);
     if (bet < minBet) {
-      return safeEdit(interaction, { ephemeral: true, content: `Minimum bet is ${formatBolts(minBet)}.` });
+      return safeEdit(interaction, { flags: MessageFlags.Ephemeral, content: `Minimum bet is ${formatBolts(minBet)}.` });
     }
     if (bet > maxBet) {
-      return safeEdit(interaction, { ephemeral: true, content: `Maximum bet is ${formatBolts(maxBet)}.` });
+      return safeEdit(interaction, { flags: MessageFlags.Ephemeral, content: `Maximum bet is ${formatBolts(maxBet)}.` });
     }
     if (current < bet) {
       const mode = uiExactMode(db, "guild");
       const sig = uiSigFigs(db);
       const balText = mode === "inline" ? renderAmountInline(current, sig) : formatBolts(current);
-      return safeEdit(interaction, { ephemeral: true, content: `Insufficient balance. Your balance is ${balText}.` });
+      return safeEdit(interaction, { flags: MessageFlags.Ephemeral, content: `Insufficient balance. Your balance is ${balText}.` });
     }
     const result = spin(bet, defaultConfig, cryptoRNG);
     const net = result.payout - bet;

@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { MessageFlags } from 'discord.js';
 
 function getKV(db: Database.Database, key: string): string | null {
     const r = db.prepare("SELECT value FROM guild_settings WHERE key = ?").get(key) as { value: string } | undefined;
@@ -69,29 +70,30 @@ export async function safeDefer(interaction: any, ephemeral = true) {
         if (interaction.isButton?.() || interaction.isStringSelectMenu?.() || interaction.isAnySelectMenu?.()) {
             if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate();
         } else {
-            if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ ephemeral });
+            const flags = ephemeral ? (MessageFlags as any)?.Ephemeral : undefined;
+            if (!interaction.deferred && !interaction.replied) await interaction.deferReply(flags !== undefined ? { flags } : {} as any);
         }
     } catch { }
 }
 
 export async function safeEdit(interaction: any, opts: any) {
     try {
+        const flags = (opts as any).flags ?? ((opts as any).ephemeral ? (MessageFlags as any)?.Ephemeral : undefined);
+        const p = flags !== undefined ? { ...opts, flags } : opts;
         if (interaction.isButton?.() || interaction.isStringSelectMenu?.() || interaction.isAnySelectMenu?.()) {
-            return interaction.editReply?.(opts) ?? interaction.update?.(opts);
+            return interaction.editReply?.(p) ?? interaction.update?.(p);
         }
-        if (interaction.deferred) return interaction.editReply?.(opts);
-        return interaction.reply?.(opts);
+        if (interaction.deferred) return interaction.editReply?.(p);
+        return interaction.reply?.(p);
     } catch { }
 }
 
 export async function replyError(interaction: any, code: string, log: any, extra?: any) {
     log?.error?.({ msg: "interaction_error", code, ...extra });
     try {
-        if (interaction.deferred || interaction.replied) {
-            await interaction.editReply?.({ content: `❗ ${code}`, ephemeral: true });
-        } else {
-            await interaction.reply?.({ content: `❗ ${code}`, ephemeral: true });
-        }
+        const p = { content: `❗ ${code}`, flags: (MessageFlags as any)?.Ephemeral } as any;
+        if (interaction.deferred || interaction.replied) await interaction.editReply?.(p);
+        else await interaction.reply?.(p);
     } catch { }
 }
 

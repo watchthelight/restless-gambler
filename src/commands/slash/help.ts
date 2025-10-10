@@ -13,18 +13,14 @@ export async function run(i: ChatInputCommandInteraction) {
     async () => {
       try {
         const { getGuildDb } = await import('../../db/connection.js');
+        const { getSetting } = await import('../../db/kv.js');
         if (!i.guildId) return { embeds: [themedEmbed(theme, 'Help', 'This bot only works in servers.')] };
         const db = getGuildDb(i.guildId);
-        const row = db
-          .prepare('SELECT max_bet, min_bet, faucet_limit, public_results, theme FROM guild_settings LIMIT 1')
-          .get() as any;
         const settings = {
-          max_bet: row?.max_bet ?? 10000,
-          min_bet: row?.min_bet ?? 10,
-          faucet_limit: row?.faucet_limit ?? 100,
-          public_results: row?.public_results ?? 0,
-          theme: row?.theme ?? 'midnight',
-        };
+          max_bet: getSetting(db, 'slots.max_bet') ?? getSetting(db, 'blackjack.max_bet') ?? '1000',
+          min_bet: getSetting(db, 'slots.min_bet') ?? getSetting(db, 'blackjack.min_bet') ?? '10',
+          faucet_limit: getSetting(db, 'faucet_limit') ?? '100',
+        } as any;
         const extra = themedEmbed(theme, 'Help — Server Defaults')
           .addFields(
             { name: 'Min bet', value: String(settings.min_bet), inline: true },

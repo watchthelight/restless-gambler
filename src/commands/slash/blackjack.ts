@@ -22,7 +22,7 @@ import { requireAdmin } from '../../admin/roles.js';
 import { blackjackLimits, validateBet, safeDefer, safeEdit, replyError } from '../../game/config.js';
 import { safeReply } from '../../interactions/reply.js';
 import { withLock } from '../../util/locks.js';
-import { findActiveSession, createSession, updateSession, settleSession, abortSession } from '../../game/blackjack/sessionStore.js';
+import { findActiveSession, createSession, updateSession, settleSession, abortSession, endSession } from '../../game/blackjack/sessionStore.js';
 
 type SessionRow = {
   id: number;
@@ -87,19 +87,26 @@ async function renderAndReply(i: ChatInputCommandInteraction | ButtonInteraction
     new ButtonBuilder().setCustomId(`blackjack:stand:${g}:${cid}:${uid}`).setStyle(ButtonStyle.Secondary).setLabel('Stand').setDisabled(dis),
     new ButtonBuilder().setCustomId(`blackjack:double:${g}:${cid}:${uid}`).setStyle(ButtonStyle.Success).setLabel('Double Down').setDisabled(dis || !!opts.disableDouble),
   );
+  const playAgainRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`bj:again:${g}:${uid}:${state.bet}`)
+      .setStyle(ButtonStyle.Success)
+      .setLabel('Play Again')
+      .setDisabled(!dis)
+  );
   if (handRender.kind === 'image') {
     const att = handRender.attachment;
     embed.setImage(`attachment://${(att as any).name}`);
-    const payload: any = { embeds: [embed], files: [att], components: [row] };
+    const payload: any = { embeds: [embed], files: [att], components: dis ? [row, playAgainRow] : [row] };
     if ((i as any).replied || (i as any).deferred) return (i as any).followUp(payload);
     return (i as any).reply(payload);
   } else {
     // Add unicode as a single field content
     embed.setDescription(`${desc}\n\n${handRender.text}`);
-    const payload: any = { embeds: [embed], components: [row] };
+    const payload: any = { embeds: [embed], components: dis ? [row, playAgainRow] : [row] };
     if ((i as any).replied || (i as any).deferred) return (i as any).followUp(payload);
     return (i as any).reply(payload);
-  }
+}
 }
 
 function loadActive(guildId: string, userId: string): { session: import('../../game/blackjack/sessionStore.js').BjSession; state: BJState } | null {
@@ -151,7 +158,7 @@ function ensureTimeout(guildId: string, channelId: string, userId: string, clien
       const result = settle(state);
       // Credit payout (initial bet already debited)
       if (result.payout > 0) await adjustBalance(guildId, userId, result.payout, 'blackjack:win');
-      settleSession(db, session.id);
+      endSession(guildId, userId);
       // Try to edit original message to disable buttons
       const messageId = (state as any).messageId;
       if (messageId) {
@@ -167,7 +174,16 @@ function ensureTimeout(guildId: string, channelId: string, userId: string, clien
           const balText = mode === "inline" ? renderAmountInline(bal, sig) : formatBolts(bal);
           const outcome = delta > 0 ? `Auto-stand: You won +${formatBolts(delta)}. New balance: ${balText}` : delta === 0 ? `Auto-stand due to inactivity. Push. Bet refunded.` : `Auto-stand: You lost ${formatBolts(-delta)}. New balance: ${balText}`;
           const themeEmbed = themedEmbed(theme, '🂡 Blackjack', outcome);
-          await msg.edit({ embeds: [themeEmbed], components: [] });
+          const row = new ActionRowBuilder<ButtonBuilder>()
+            .addComponents(
+              new ButtonBuilder().setCustomId(`blackjack:hit:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Primary).setLabel('Hit').setDisabled(true),
+              new ButtonBuilder().setCustomId(`blackjack:stand:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Secondary).setLabel('Stand').setDisabled(true),
+              new ButtonBuilder().setCustomId(`blackjack:double:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Success).setLabel('Double Down').setDisabled(true),
+            );
+          const again = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId(`bj:again:${guildId}:${userId}:${state.bet}`).setStyle(ButtonStyle.Success).setLabel('Play Again')
+          );
+          await msg.edit({ embeds: [themeEmbed], components: [row, again] });
         } catch { }
       }
       console.info(JSON.stringify({ msg: 'blackjack', action: 'auto-stand', guild_id: guildId, channel_id: channelId, user_id: userId }));
@@ -214,18 +230,42 @@ export async function execute(i: ChatInputCommandInteraction) {
     ensureTimeout(guildId, channelId, userId, i.client);
     // Auto settle if immediate blackjack conditions
     if (isBlackjack(state.playerHands[0].cards) || isBlackjack(state.dealer.cards)) {
-      bjStand(state);
-      const result = settle(state);
-      if (result.payout > 0) await adjustBalance(guildId, userId, result.payout, 'blackjack:win');
-      const session = findActiveSession(db, guildId, userId);
-      if (session) settleSession(db, session.id);
-      const delta = result.payout - bet;
-      const balNow = getBalance(guildId, userId);
-      const mode = uiExactMode(db, "guild");
-      const sig = uiSigFigs(db);
-      const balText = mode === "inline" ? renderAmountInline(balNow, sig) : formatBolts(balNow);
-      const headline = delta > 0 ? `Blackjack! +${formatBolts(delta)}\nNew balance: ${balText}` : delta === 0 ? `Push. Bet refunded.\nNew balance: ${balText}` : `You lost ${formatBolts(-delta)}.\nNew balance: ${balText}`;
-      await renderAndReply(i, state, { revealDealer: true, headline, finished: true, disableDouble: true });
+      await withLock(`bj:${guildId}:${userId}`, async () => {
+        bjStand(state);
+        const result = settle(state);
+        if (result.payout > 0) await adjustBalance(guildId, userId, result.payout, 'blackjack:win');
+        endSession(guildId, userId);
+        const delta = result.payout - bet;
+        const balNow = getBalance(guildId, userId);
+        const mode = uiExactMode(db, "guild");
+        const sig = uiSigFigs(db);
+        const balText = mode === "inline" ? renderAmountInline(balNow, sig) : formatBolts(balNow);
+        const headline = delta > 0 ? `Blackjack! +${formatBolts(delta)}\nNew balance: ${balText}` : delta === 0 ? `Push. Bet refunded.\nNew balance: ${balText}` : `You lost ${formatBolts(-delta)}.\nNew balance: ${balText}`;
+        // Edit the original reply if possible
+        try { await i.editReply({}).catch(() => {}); } catch {}
+        await (i as any).editReply ? (i as any).editReply(await (async () => {
+          const theme = getGuildTheme(guildId);
+          const ph = state.playerHands[state.activeIndex]?.cards || state.playerHands[0].cards;
+          const toCard = (c: any) => ({ suit: c.s as any, rank: (c.r as any) });
+          const playerCards = ph.map(toCard);
+          const dealerCards = state.dealer.cards.map(toCard);
+          const handRender = await renderHands(i.guildId!, playerCards, dealerCards, true);
+          const embed = themedEmbed(theme, '🂡 Blackjack', headline);
+          if (handRender.kind === 'image') embed.setImage(`attachment://${(handRender.attachment as any).name}`);
+          const row = new ActionRowBuilder<ButtonBuilder>()
+            .addComponents(
+              new ButtonBuilder().setCustomId(`blackjack:hit:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Primary).setLabel('Hit').setDisabled(true),
+              new ButtonBuilder().setCustomId(`blackjack:stand:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Secondary).setLabel('Stand').setDisabled(true),
+              new ButtonBuilder().setCustomId(`blackjack:double:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Success).setLabel('Double Down').setDisabled(true),
+            );
+          const again = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId(`bj:again:${guildId}:${userId}:${bet}`).setStyle(ButtonStyle.Success).setLabel('Play Again')
+          );
+          const payload: any = { embeds: [embed], components: [row, again] };
+          if (handRender.kind === 'image') payload.files = [handRender.attachment];
+          return payload;
+        })()) : await renderAndReply(i, state, { revealDealer: true, headline, finished: true, disableDouble: true });
+      });
     }
     console.info(JSON.stringify({ msg: 'blackjack', action: 'start', guild_id: guildId, channel_id: channelId, user_id: userId, bet }));
   } else if (sub === 'hit' || sub === 'stand' || sub === 'double') {
@@ -239,20 +279,74 @@ export async function execute(i: ChatInputCommandInteraction) {
       const p = handTotal(state.playerHands[state.activeIndex].cards);
       const headline = p.total > 21 ? `Bust. You lost ${formatBolts(state.bet)}.` : undefined;
       const finished = p.total >= 21;
-      await renderAndReply(i, state, { revealDealer: false, disableDouble: true, finished, headline });
-      ensureTimeout(guildId, (state as any).channelId || channelId, userId, i.client);
+      if (finished) {
+        await withLock(`bj:${guildId}:${userId}`, async () => {
+          const result = settle(state);
+          // no payout on bust since initial bet was already debited
+          endSession(guildId, userId);
+          const balNow = getBalance(guildId, userId);
+          const mode = uiExactMode(db, "guild");
+          const sig = uiSigFigs(db);
+          const balText = mode === "inline" ? renderAmountInline(balNow, sig) : formatBolts(balNow);
+          const headline2 = `Bust. You lost ${formatBolts(state.bet)}.\nNew balance: ${balText}`;
+          const theme = getGuildTheme(guildId);
+          const ph = state.playerHands[state.activeIndex]?.cards || state.playerHands[0].cards;
+          const toCard = (c: any) => ({ suit: c.s as any, rank: (c.r as any) });
+          const playerCards = ph.map(toCard);
+          const dealerCards = state.dealer.cards.map(toCard);
+          const handRender = await renderHands(i.guildId!, playerCards, dealerCards, true);
+          const embed = themedEmbed(theme, '🂡 Blackjack', headline2);
+          if (handRender.kind === 'image') embed.setImage(`attachment://${(handRender.attachment as any).name}`);
+          const row = new ActionRowBuilder<ButtonBuilder>()
+            .addComponents(
+              new ButtonBuilder().setCustomId(`blackjack:hit:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Primary).setLabel('Hit').setDisabled(true),
+              new ButtonBuilder().setCustomId(`blackjack:stand:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Secondary).setLabel('Stand').setDisabled(true),
+              new ButtonBuilder().setCustomId(`blackjack:double:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Success).setLabel('Double Down').setDisabled(true),
+            );
+          const again = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId(`bj:again:${guildId}:${userId}:${state.bet}`).setStyle(ButtonStyle.Success).setLabel('Play Again')
+          );
+          const payload: any = { embeds: [embed], components: [row, again] };
+          if (handRender.kind === 'image') payload.files = [handRender.attachment];
+          await (i as any).editReply ? (i as any).editReply(payload) : (i as any).reply(payload);
+        });
+      } else {
+        await renderAndReply(i, state, { revealDealer: false, disableDouble: true, finished, headline });
+        ensureTimeout(guildId, (state as any).channelId || channelId, userId, i.client);
+      }
     } else if (sub === 'stand') {
-      bjStand(state);
-      const result = settle(state);
-      if (result.payout > 0) await adjustBalance(guildId, userId, result.payout, 'blackjack:win');
-      settleSession(db, session.id);
-      const delta = result.payout - state.bet;
-      const balNow = getBalance(guildId, userId);
-      const mode = uiExactMode(db, "guild");
-      const sig = uiSigFigs(db);
-      const balText = mode === "inline" ? renderAmountInline(balNow, sig) : formatBolts(balNow);
-      const headline = delta > 0 ? `You won +${formatBolts(delta)}!!!\nNew balance: ${balText}` : delta === 0 ? `Push. Bet refunded.\nNew balance: ${balText}` : `You lost ${formatBolts(-delta)}.\nNew balance: ${balText}`;
-      await renderAndReply(i, state, { revealDealer: true, disableDouble: true, finished: true, headline });
+      await withLock(`bj:${guildId}:${userId}`, async () => {
+        bjStand(state);
+        const result = settle(state);
+        if (result.payout > 0) await adjustBalance(guildId, userId, result.payout, 'blackjack:win');
+        endSession(guildId, userId);
+        const delta = result.payout - state.bet;
+        const balNow = getBalance(guildId, userId);
+        const mode = uiExactMode(db, "guild");
+        const sig = uiSigFigs(db);
+        const balText = mode === "inline" ? renderAmountInline(balNow, sig) : formatBolts(balNow);
+        const headline = delta > 0 ? `You won +${formatBolts(delta)}!!!\nNew balance: ${balText}` : delta === 0 ? `Push. Bet refunded.\nNew balance: ${balText}` : `You lost ${formatBolts(-delta)}.\nNew balance: ${balText}`;
+        const theme = getGuildTheme(guildId);
+        const ph = state.playerHands[state.activeIndex]?.cards || state.playerHands[0].cards;
+        const toCard = (c: any) => ({ suit: c.s as any, rank: (c.r as any) });
+        const playerCards = ph.map(toCard);
+        const dealerCards = state.dealer.cards.map(toCard);
+        const handRender = await renderHands(i.guildId!, playerCards, dealerCards, true);
+        const embed = themedEmbed(theme, '🂡 Blackjack', headline);
+        if (handRender.kind === 'image') embed.setImage(`attachment://${(handRender.attachment as any).name}`);
+        const row = new ActionRowBuilder<ButtonBuilder>()
+          .addComponents(
+            new ButtonBuilder().setCustomId(`blackjack:hit:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Primary).setLabel('Hit').setDisabled(true),
+            new ButtonBuilder().setCustomId(`blackjack:stand:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Secondary).setLabel('Stand').setDisabled(true),
+            new ButtonBuilder().setCustomId(`blackjack:double:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Success).setLabel('Double Down').setDisabled(true),
+          );
+        const again = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId(`bj:again:${guildId}:${userId}:${state.bet}`).setStyle(ButtonStyle.Success).setLabel('Play Again')
+        );
+        const payload: any = { embeds: [embed], components: [row, again] };
+        if (handRender.kind === 'image') payload.files = [handRender.attachment];
+        await (i as any).editReply ? (i as any).editReply(payload) : (i as any).reply(payload);
+      });
     } else if (sub === 'double') {
       // Must have funds to double
       const bal = getBalance(guildId, userId);
@@ -267,14 +361,35 @@ export async function execute(i: ChatInputCommandInteraction) {
       bjDouble(state);
       const result = settle(state);
       if (result.payout > 0) await adjustBalance(guildId, userId, result.payout, 'blackjack:win');
-      settleSession(db, session.id);
-      const delta = result.payout - state.bet * 2;
-      const balNow = getBalance(guildId, userId);
-      const mode = uiExactMode(db, "guild");
-      const sig = uiSigFigs(db);
-      const balText = mode === "inline" ? renderAmountInline(balNow, sig) : formatBolts(balNow);
-      const headline = delta > 0 ? `You won +${formatBolts(delta)}!!!\nNew balance: ${balText}` : delta === 0 ? `Push. Bet refunded.\nNew balance: ${balText}` : `You lost ${formatBolts(-delta)}.\nNew balance: ${balText}`;
-      await renderAndReply(i, state, { revealDealer: true, disableDouble: true, finished: true, headline });
+      await withLock(`bj:${guildId}:${userId}`, async () => {
+        endSession(guildId, userId);
+        const delta = result.payout - state.bet * 2;
+        const balNow = getBalance(guildId, userId);
+        const mode = uiExactMode(db, "guild");
+        const sig = uiSigFigs(db);
+        const balText = mode === "inline" ? renderAmountInline(balNow, sig) : formatBolts(balNow);
+        const headline = delta > 0 ? `You won +${formatBolts(delta)}!!!\nNew balance: ${balText}` : delta === 0 ? `Push. Bet refunded.\nNew balance: ${balText}` : `You lost ${formatBolts(-delta)}.\nNew balance: ${balText}`;
+        const theme = getGuildTheme(guildId);
+        const ph = state.playerHands[state.activeIndex]?.cards || state.playerHands[0].cards;
+        const toCard = (c: any) => ({ suit: c.s as any, rank: (c.r as any) });
+        const playerCards = ph.map(toCard);
+        const dealerCards = state.dealer.cards.map(toCard);
+        const handRender = await renderHands(i.guildId!, playerCards, dealerCards, true);
+        const embed = themedEmbed(theme, '🂡 Blackjack', headline);
+        if (handRender.kind === 'image') embed.setImage(`attachment://${(handRender.attachment as any).name}`);
+        const row = new ActionRowBuilder<ButtonBuilder>()
+          .addComponents(
+            new ButtonBuilder().setCustomId(`blackjack:hit:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Primary).setLabel('Hit').setDisabled(true),
+            new ButtonBuilder().setCustomId(`blackjack:stand:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Secondary).setLabel('Stand').setDisabled(true),
+            new ButtonBuilder().setCustomId(`blackjack:double:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Success).setLabel('Double Down').setDisabled(true),
+          );
+        const again = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setCustomId(`bj:again:${guildId}:${userId}:${state.bet}`).setStyle(ButtonStyle.Success).setLabel('Play Again')
+        );
+        const payload: any = { embeds: [embed], components: [row, again] };
+        if (handRender.kind === 'image') payload.files = [handRender.attachment];
+        await (i as any).editReply ? (i as any).editReply(payload) : (i as any).reply(payload);
+      });
     }
     console.info(JSON.stringify({ msg: 'blackjack', action: sub, guild_id: guildId, channel_id: channelId, user_id: userId }));
   } else if (sub === 'cancel') {
@@ -291,7 +406,9 @@ export async function execute(i: ChatInputCommandInteraction) {
         }
         const state: BJState = JSON.parse(session.state_json);
         const bet = state.bet || 0;
-        abortSession(db, session.id);
+        // End session immediately to prevent lingering active state
+        try { abortSession(db, session.id); } catch {}
+        try { endSession(guildId, userId); } catch {}
         // Refund inside same txn to keep atomic with cancel
         const row = db.prepare('SELECT balance FROM balances WHERE user_id = ?').get(userId) as { balance?: number } | undefined;
         const cur = row?.balance ?? 0;
@@ -354,5 +471,55 @@ export async function handleButton(i: ButtonInteraction) {
     } catch (e: any) {
       await replyError(i, "ERR-BLACKJACK-BTN", console, { err: String(e) });
     }
+  });
+}
+
+export async function handleAgainButton(i: ButtonInteraction) {
+  const [prefix, action, g, u, betStr] = i.customId.split(':');
+  if (prefix !== 'bj' || action !== 'again') return;
+  if (!i.guildId || i.guildId !== g) return;
+  if (i.user.id !== u) return;
+  const bet = Number(betStr);
+  await withLock(`bj:${g}:${u}`, async () => {
+    await i.deferUpdate().catch(() => {});
+    const db = getGuildDb(i.guildId!);
+    // Ensure no active session exists
+    if (findActiveSession(db, i.guildId!, i.user.id)) return;
+    // Validate funds and limits
+    const limits = blackjackLimits(db);
+    const v = validateBet(bet, limits);
+    if (!v.ok) {
+      await i.followUp({ content: v.reason, flags: MessageFlags.Ephemeral }).catch(() => {});
+      return;
+    }
+    const bal = getBalance(i.guildId!, i.user.id);
+    if (bal < bet) {
+      await i.followUp({ content: 'Not enough funds for that bet.', flags: MessageFlags.Ephemeral }).catch(() => {});
+      return;
+    }
+    // Reserve and deal
+    await adjustBalance(i.guildId!, i.user.id, -bet, 'blackjack:bet');
+    const state = dealInitial(bet);
+    (state as any).channelId = i.channelId;
+    saveSession(i.guildId!, i.user.id, state);
+    // Render initial hand in-place
+    const theme = getGuildTheme(i.guildId);
+    const ph = state.playerHands[state.activeIndex]?.cards || state.playerHands[0].cards;
+    const toCard = (c: any) => ({ suit: c.s as any, rank: (c.r as any) });
+    const playerCards = ph.map(toCard);
+    const dealerCards = state.dealer.cards.map(toCard);
+    const handRender = await renderHands(i.guildId!, playerCards, dealerCards, false);
+    const embed = themedEmbed(theme, '🂡 Blackjack', 'Your move.');
+    if (handRender.kind === 'image') embed.setImage(`attachment://${(handRender.attachment as any).name}`);
+    const row = new ActionRowBuilder<ButtonBuilder>()
+      .addComponents(
+        new ButtonBuilder().setCustomId(`blackjack:hit:${i.guildId}:${i.channelId}:${i.user.id}`).setStyle(ButtonStyle.Primary).setLabel('Hit'),
+        new ButtonBuilder().setCustomId(`blackjack:stand:${i.guildId}:${i.channelId}:${i.user.id}`).setStyle(ButtonStyle.Secondary).setLabel('Stand'),
+        new ButtonBuilder().setCustomId(`blackjack:double:${i.guildId}:${i.channelId}:${i.user.id}`).setStyle(ButtonStyle.Success).setLabel('Double Down'),
+      );
+    const payload: any = { embeds: [embed], components: [row] };
+    if (handRender.kind === 'image') payload.files = [handRender.attachment];
+    await i.editReply(payload).catch(() => {});
+    ensureTimeout(i.guildId!, i.channelId, i.user.id, i.client);
   });
 }

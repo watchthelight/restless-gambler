@@ -61,6 +61,15 @@ export function initInteractionRouter(client: Client) {
           }
           return;
         }
+        if (i.customId.startsWith('bj:again:')) {
+          await safeDefer(i, true);
+          try {
+            await (BlackjackSlash as any).handleAgainButton(i);
+          } catch (e: any) {
+            await replyError(i, "ERR-COMPONENT", console, { err: String(e) });
+          }
+          return;
+        }
         if (i.customId.startsWith('roulette:')) {
           await safeDefer(i, true);
           try {

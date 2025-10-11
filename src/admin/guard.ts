@@ -2,7 +2,7 @@ import type { BaseInteraction } from 'discord.js';
 import { themedEmbed } from '../ui/embeds.js';
 import { send } from '../ui/reply.js';
 import { getGuildDb, getGlobalAdminDb } from '../db/connection.js';
-import { isAdmin as hasAdminRole, isSuperAdmin as hasSuper } from './permissions.js';
+import { ensureAttached, isSuper as storeIsSuper, isGuildAdmin as storeIsGuildAdmin } from './adminStore.js';
 
 export class AuthzError extends Error { constructor(msg = 'Not authorized') { super(msg); } }
 
@@ -13,20 +13,13 @@ export async function requireAdmin(interaction: BaseInteraction) {
   if (uid && gid) {
     try {
       const db = getGuildDb(gid);
-      ok = hasAdminRole(db, uid);
-    } catch {
-      // Fallback to local guild_admins and then to global super_admins via direct connection
-      try {
-        const db = getGuildDb(gid);
-        ok = hasAdminRole(db, uid);
-      } catch {
-        try {
-          const adb = getGlobalAdminDb();
-          const r = adb.prepare('SELECT 1 FROM super_admins WHERE user_id = ? LIMIT 1').get(uid) as any;
-          ok = !!r;
-        } catch { ok = false; }
+      try { ensureAttached(db as any); } catch { }
+      ok = storeIsSuper(db as any, uid) || storeIsGuildAdmin(db as any, gid, uid);
+      if (!ok) {
+        // Back-compat: accept local guild_admins in main schema
+        try { ok = !!(db.prepare('SELECT 1 FROM guild_admins WHERE user_id = ? LIMIT 1').get(uid) as any); } catch { /* ignore */ }
       }
-    }
+    } catch { ok = false; }
   }
   if (!ok) {
     try { console.warn(JSON.stringify({ msg: 'admin_check_miss', guildId: gid, userId: uid })); } catch { }
@@ -47,19 +40,14 @@ export async function requireSuper(interaction: BaseInteraction) {
       const gid = (interaction as any).guildId as string | undefined;
       if (gid) {
         const db = getGuildDb(gid);
-        ok = hasSuper(db, uid);
+        try { ensureAttached(db as any); } catch { }
+        ok = storeIsSuper(db as any, uid);
       } else {
+        // DM context: check global supers via attached admin DB on a transient connection
         const adb = getGlobalAdminDb();
-        const row = adb.prepare('SELECT 1 FROM super_admins WHERE user_id = ? LIMIT 1').get(uid) as any;
-        ok = !!row;
+        ok = !!(adb.prepare('SELECT 1 FROM super_admins WHERE user_id = ? LIMIT 1').get(uid) as any);
       }
-    } catch {
-      try {
-        const adb = getGlobalAdminDb();
-        const row = adb.prepare('SELECT 1 FROM super_admins WHERE user_id = ? LIMIT 1').get(uid) as any;
-        ok = !!row;
-      } catch { ok = false; }
-    }
+    } catch { ok = false; }
   }
   if (!ok) {
     const emb = themedEmbed('error', 'Access Denied', 'Super admin required.', undefined, {

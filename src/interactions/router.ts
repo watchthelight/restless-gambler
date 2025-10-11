@@ -1,282 +1,57 @@
-import type { Client, Interaction, ChatInputCommandInteraction, InteractionReplyOptions } from 'discord.js';
-import { MessageFlags, PermissionsBitField } from 'discord.js';
-import { resolveRuntime, VISIBILITY_MODE } from '../config/runtime.js';
-import { ui } from '../cli/ui.js';
-import log from '../cli/logger.js';
-import { getSlashCommands } from '../commands/slash/index.js';
-import { handleAutocomplete } from './autocomplete.js';
-import { handleSlotsButton } from './buttons/slots.js';
-import * as EconButtons from './buttons/econ.js';
-import * as BlackjackSlash from '../commands/slash/blackjack.js';
-import * as RouletteCmd from '../games/roulette/commands.js';
-import * as AdminCmd from '../commands/admin/index.js';
-import * as LoanCmd from '../commands/loan/index.js';
-import { isEnabled, reason as disabledReason } from '../config/toggles.js';
-// Removed: amount exact/copy handlers and listeners (Exact/Copy buttons deprecated)
-import { getGuildDb } from '../db/connection.js';
-import { formatUserError, logError, buildErrorId } from '../utils/errors.js';
-import { isAdmin as hasAdmin, isSuperAdmin } from '../admin/permissions.js';
-import { getCommandControl } from '../db/commandControl.js';
-import { migrateGuildDb } from '../db/migrateGuild.js';
-import { safeDefer, replyError } from '../game/config.js';
-
-function logPermError(e: any, i: Interaction) {
-  const code = (e && (e.code || e.status)) ?? 0;
-  if (code === 50013 || code === 50007) {
-    console.warn(
-      JSON.stringify({ msg: 'permission_error', code, guildId: (i as any).guildId ?? null, channelId: (i as any).channelId ?? null }),
-    );
-  }
-}
-
-const cfg = resolveRuntime();
-
-function memberHasAnyRole(interaction: Interaction, roleIds: Set<string>): boolean {
-  if (!roleIds || roleIds.size === 0) return false;
-  const roles = interaction.member?.roles;
-  const hasCache = roles && "cache" in roles;
-  if (hasCache) {
-    for (const id of roleIds) if ((roles as any).cache.has(id)) return true;
-    return false;
-  }
-  const arr = (roles as any) ?? [];
-  for (const id of roleIds) if (arr.includes?.(id)) return true;
-  return false;
-}
+﻿import type { Client, Interaction, ChatInputCommandInteraction } from "discord.js";
+import { MessageFlags } from "discord.js";
+import { getSlashCommands } from "../commands/slash/index.js";
+import { getGuildDb } from "../db/connection.js";
+import { getCommandControl } from "../db/commandControl.js";
+import { isSuperAdmin } from "../admin/permissions.js";
+import { isEnabled, reason as disabledReason } from "../config/toggles.js";
 
 export function initInteractionRouter(client: Client) {
-  client.on('interactionCreate', async (i: Interaction) => {
-    // Non-slash interactions routed here as well
+  client.on("interactionCreate", async (i: Interaction) => {
     try {
-      if (i.isAutocomplete()) {
-        return handleAutocomplete(i as any);
-      }
-      if (i.isButton()) {
-        if (i.customId.startsWith('slots:')) {
-          await safeDefer(i, true);
-          try {
-            await handleSlotsButton(i);
-          } catch (e: any) {
-            await replyError(i, "ERR-COMPONENT", console, { err: String(e) });
-          }
-          return;
-        }
-        if (i.customId.startsWith('blackjack:')) {
-          await safeDefer(i, true);
-          try {
-            await (BlackjackSlash as any).handleButton(i);
-          } catch (e: any) {
-            await replyError(i, "ERR-COMPONENT", console, { err: String(e) });
-          }
-          return;
-        }
-        if (i.customId.startsWith('bj:again:')) {
-          await safeDefer(i, true);
-          try {
-            await (BlackjackSlash as any).handleAgainButton(i);
-          } catch (e: any) {
-            await replyError(i, "ERR-COMPONENT", console, { err: String(e) });
-          }
-          return;
-        }
-        if (i.customId.startsWith('roulette:')) {
-          await safeDefer(i, true);
-          try {
-            await (RouletteCmd as any).handleRouletteButton(i);
-          } catch (e: any) {
-            await replyError(i, "ERR-COMPONENT", console, { err: String(e) });
-          }
-          return;
-        }
-        if (i.customId.startsWith('econ:')) {
-          await safeDefer(i, true);
-          try {
-            await (EconButtons as any).handleButton(i);
-          } catch (e: any) {
-            await replyError(i, "ERR-COMPONENT", console, { err: String(e) });
-          }
-          return;
-        }
-        if (i.customId.startsWith('admin:reboot:confirm:')) {
-          await safeDefer(i, true);
-          try {
-            await (AdminCmd as any).handleButton(i);
-          } catch (e: any) {
-            await replyError(i, "ERR-COMPONENT", console, { err: String(e) });
-          }
-          return;
-        }
-        if (i.customId.startsWith('loan:')) {
-          await safeDefer(i, true);
-          try {
-            await (LoanCmd as any).handleButton(i);
-          } catch (e: any) {
-            await replyError(i, "ERR-COMPONENT", console, { err: String(e) });
-          }
-          return;
-        }
-        // Legacy amt:exact/amt:copy buttons are no longer handled.
-        return;
-      }
-      // Route selects
-      if ((i as any).isStringSelectMenu && (i as any).isStringSelectMenu()) {
-        const ii: any = i as any;
-        if (ii.customId && String(ii.customId).startsWith('loan:')) {
-          await safeDefer(ii, true);
-          try {
-            await (LoanCmd as any).handleSelect(ii);
-          } catch (e: any) {
-            await replyError(ii, "ERR-COMPONENT", console, { err: String(e) });
-          }
-          return;
-        }
-      }
-      if (!i.isChatInputCommand()) return;
-
-      // Dev-only gate
-      if (cfg.devOnly && i.guildId && i.member) {
-        if (!memberHasAnyRole(i, cfg.devOnlyRoles)) {
-          await i.reply({
-            content: 'This bot is in phases of early development. Reach out to watchthelight to join the team!',
-            flags: MessageFlags.Ephemeral
-          }).catch(() => { });
-          return;
-        }
-      }
-      const name = i.commandName;
-      // Read subcommand early so whitelist gating can inspect it safely
+      if (!("isChatInputCommand" in i) || !(i as any).isChatInputCommand()) return;
+      const name = (i as any).commandName as string;
       let sub: string | null = null;
       try { sub = (i as any).options?.getSubcommand?.(false) ?? null; } catch { sub = null; }
-      // Backstop: block known admin-only top-level commands if caller isn’t a Discord admin
-      const ADMIN_ONLY = new Set(['admin', 'rank-admin', 'loan-admin']);
-      const isDiscordAdmin = !!(i.member as any)?.permissions?.has?.(PermissionsBitField.Flags.Administrator);
-      if (ADMIN_ONLY.has(name) && !isDiscordAdmin) {
-        await i.reply({ content: 'You do not have permission to use this command.', flags: MessageFlags.Ephemeral }).catch(() => {});
-        return;
-      }
-      // Per-guild whitelist mode: allow only specific commands
-      if (i.guildId) {
-        try {
-          const db = getGuildDb(i.guildId);
-          const cc = getCommandControl(db, i.guildId);
-          // Compute escape hatch and optional super bypass before enforcing whitelist
-          const cmd = name.toLowerCase();
-          const isEscapeHatch = (cmd === 'admin' && (sub?.toLowerCase?.() ?? null) === 'whitelist-release');
-          let isSuper = false;
-          try { isSuper = isSuperAdmin(db, i.user.id); } catch { isSuper = false; }
 
-          if (cc.mode === 'whitelist' && !isEscapeHatch && !isSuper) {
-            const allowed: string[] = JSON.parse(cc.whitelist_json || '[]').map((s: string) => s.toLowerCase());
+      // Per-guild whitelist mode
+      if ((i as any).guildId) {
+        try {
+          const db = getGuildDb((i as any).guildId);
+          const cc = getCommandControl(db, (i as any).guildId);
+          const cmd = name.toLowerCase();
+          const isEscapeHatch = (cmd === "admin" && ((sub?.toLowerCase?.() ?? null) === "whitelist-release"));
+          let isSuper = false;
+          try { isSuper = isSuperAdmin(db, (i as any).user?.id); } catch { isSuper = false; }
+          if (cc.mode === "whitelist" && !isEscapeHatch && !isSuper) {
+            const allowed: string[] = JSON.parse(cc.whitelist_json || "[]").map((s: string) => s.toLowerCase());
             if (!allowed.includes(cmd)) {
-              await i.reply({ content: 'Command disabled (whitelist mode active). Use `/admin whitelist-release` to restore normal operation.', flags: MessageFlags.Ephemeral }).catch(() => { });
+              await (i as any).reply({ content: "Command disabled (whitelist mode active). Use `/admin whitelist-release` to restore normal operation.", flags: MessageFlags.Ephemeral }).catch(() => { });
               return;
             }
           }
-        } catch { /* ignore guard errors */ }
+        } catch { /* ignore */ }
       }
+
       if (!isEnabled(name)) {
         const r = disabledReason(name);
-        await i.reply({
-          content: `⚠️ /${name} is currently disabled${r ? ` — ${r}` : ''}.`,
-        }).catch(() => { });
+        await (i as any).reply({ content: "— /" + name + " is currently disabled" + (r ? (" — " + r) : "") + "." }).catch(() => { });
         return;
       }
-      // 'sub' already read above for whitelist gating
-      const who = (i.user && (i.user.tag || i.user.username)) ? `${i.user.tag || i.user.username}#${i.user.id}` : i.user?.id || 'unknown';
-      const where = `${(i.guild as any)?.name || i.guildId || 'DM'}${(i.channel as any)?.name ? ' (#' + (i.channel as any).name + ')' : ''}`;
-      ui.say(`🎮 /${name}${sub ? ' ' + sub : ''} by ${who} in ${where}`, 'dim');
-      log.debug('interaction', 'interaction', { name, sub, id: i.id, guildId: i.guildId || null, userId: i.user?.id || null });
 
-      let acknowledged = false;
-      const t = setTimeout(async () => {
-        if (!i.deferred && !i.replied) {
-          acknowledged = true;
-          // Defer publicly to avoid locking visibility to ephemeral
-          await i.deferReply({}).catch(() => { });
-          ; (i as any).__autoDeferred = true;
-        }
-      }, 1500);
-
-      try {
-        const cmd = getSlashCommands().find((c) => c.name === name);
-        if (!cmd) {
-          if (!acknowledged && !i.replied && !i.deferred) await i.reply({ content: 'Unknown command.', flags: MessageFlags.Ephemeral }).catch(() => { });
-          else if (i.deferred && !i.replied) await i.editReply({ content: 'Unknown command.' }).catch(() => { });
-          return;
-        }
-        try {
-          await cmd.run(i as ChatInputCommandInteraction);
-        } catch (e: any) {
-          const errStr = String(e);
-          if (errStr.includes('no such table')) {
-            try {
-              if (i.guildId) {
-                const db = getGuildDb(i.guildId);
-                migrateGuildDb(db, i.guildId, console);
-                await cmd.run(i as ChatInputCommandInteraction);
-                return;
-              }
-            } catch (retryErr) {
-              console.error(JSON.stringify({ msg: 'handler_error', code: 'ERR-DB-SCHEMA', guildId: i.guildId, name: i.commandName, err: String(retryErr) }));
-              const msgOpts: InteractionReplyOptions = { content: 'Something went wrong (ERR-DB-SCHEMA)', allowedMentions: { parse: [] as const } };
-              if (!acknowledged && !i.replied && !i.deferred) await i.reply(msgOpts).catch(() => { });
-              else if (i.deferred && !i.replied) await i.editReply({ content: msgOpts.content }).catch(() => { });
-              return;
-            }
-          }
-          throw e;
-        }
-      } catch (e) {
-        const s = String((e as any)?.message || e);
-        const DUP = /already been sent or deferred|Unknown interaction|40060/;
-        if (DUP.test(s)) {
-          console.info(JSON.stringify({ msg: 'interaction_dup_ignored' }));
-          return;
-        }
-        // Enhanced error reporting: redact, correlate, and show more detail to admins
-        let isAdmin = false;
-        try {
-          if (i.guildId && i.user?.id) {
-            const db = getGuildDb(i.guildId);
-            isAdmin = hasAdmin(db, i.user.id);
-          }
-        } catch { /* ignore admin check failure */ }
-
-        const errorId = buildErrorId();
-        logError(
-          {
-            msg: 'command_error',
-            command: i.commandName,
-            guildId: i.guildId ?? null,
-            userId: i.user?.id ?? null,
-            options: (i as any).options?.data ?? null,
-            errorId,
-          },
-          e,
-        );
-
-        const content = formatUserError(i.commandName, e, isAdmin, errorId);
-        logPermError(e, i);
-        try {
-          const msgOpts: InteractionReplyOptions = { content, allowedMentions: { parse: [] as const } };
-          if (i.replied || i.deferred) await (i as any).followUp(msgOpts).catch(() => { });
-          else await i.reply(msgOpts).catch(() => { });
-        } catch {
-          // last resort
-          console.error(JSON.stringify({ msg: 'reply_failed', command: i.commandName, errorId }));
-        }
-      } finally {
-        clearTimeout(t);
+      const cmd = getSlashCommands().find((c) => c.name === name);
+      if (!cmd) {
+        await (i as any).reply({ content: "Unknown command.", flags: MessageFlags.Ephemeral }).catch(() => { });
+        return;
       }
+      await cmd.run(i as ChatInputCommandInteraction);
     } catch (e) {
       const s = String((e as any)?.message || e);
       const DUP = /already been sent or deferred|Unknown interaction|40060/;
-      if (DUP.test(s)) {
-        console.info(JSON.stringify({ msg: 'interaction_dup_ignored' }));
-        return;
-      }
-      console.error(JSON.stringify({ msg: 'router_error', error: s }));
-      log.error('Router error', 'interaction', { error: String(e) });
+      if (DUP.test(s)) return;
+      try {
+        if (!(i as any).replied && !(i as any).deferred) await (i as any).reply({ content: "Something went wrong." }).catch(() => { });
+      } catch { }
     }
   });
 }

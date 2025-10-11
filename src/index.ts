@@ -2,7 +2,6 @@ import dotenv from 'dotenv';
 import { createClient } from './client.js';
 import { closeAll, getDbPaths, getGuildDb } from './db/connection.js';
 import { registerAllCommands } from './register.js';
-import { initInteractionRouter } from './interactions/router.js';
 import { ensureSchema } from './db/ensure.js';
 import { ui } from './cli/ui.js';
 import { createLogger } from "./log.js";
@@ -16,7 +15,6 @@ import { startLoanReminderLoop } from "./loans/reminders.js";
 import { setClient } from './bot/client.js';
 import { startRankSchedulers } from './bootstrap/scheduler.js';
 import path from 'node:path';
-import { ensureAdminGlobalDb } from './db/adminGlobal.js';
 
 // Suppress console output temporarily while loading dotenv (to hide emoji tips)
 const originalLog = console.log;
@@ -145,10 +143,10 @@ async function main() {
   }
 
   await ui.timed('Opening databases', async () => {
-    // Ensure global admin DB exists early
+    // Ensure data dir exists; admin DB attaches on demand
     try {
       const dataDir = path.resolve('data');
-      ensureAdminGlobalDb(path.join(dataDir, 'admin_global.db'));
+      await (await import('node:fs/promises')).mkdir(dataDir, { recursive: true });
     } catch { }
     ensureSchema();
     try {
@@ -223,7 +221,8 @@ async function main() {
       log.error({ msg: 'Slash registration failed', scope: 'register', error: String(e?.message || e) });
     }
   }
-  initInteractionRouter(client);
+  const Router: any = await import('./interactions/router.js');
+  if (typeof Router.initInteractionRouter === 'function') Router.initInteractionRouter(client);
 }
 
 main().catch((e) => {

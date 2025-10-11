@@ -2,7 +2,7 @@ import { SlashCommandBuilder, ChatInputCommandInteraction, AttachmentBuilder, Ac
 import { spawn } from 'node:child_process';
 import { requireAdmin, requireSuper } from '../../admin/guard.js';
 import { makePublicAdmin } from '../util/adminBuilder.js';
-import { addAdmin as storeAddAdmin, removeAdmin as storeRemoveAdmin, listAdmins as storeListAdmins, getRole as storeGetRole, type AdminRole, addGuildAdmin, removeGuildAdmin, listAdminsForGuild } from '../../admin/adminStore.js';
+import { ensureAttached as ensureAdminAttached, addGuildAdmin, getPerGuildAdmins, getSupers, isSuper as storeIsSuper, isGuildAdmin as storeIsGuildAdmin } from '../../admin/adminStore.js';
 import { themedEmbed } from '../../ui/embeds.js';
 import { safeReply } from '../../interactions/reply.js';
 import { getGuildTheme } from '../../ui/theme.js';
@@ -23,8 +23,6 @@ import { formatBalance, formatExact } from '../../util/formatBalance.js';
 import { safeDefer } from '../../interactions/reply.js';
 import { isTestEnv } from '../../util/env.js';
 import log from '../../cli/logger.js';
-import { adminListEmbed } from './view.js';
-import { formatMentionInGuild } from '../../util/discord.js';
 import { listToggles, setToggle } from '../../config/toggles.js';
 import { isRateLimited, getRateLimitReset } from '../../util/ratelimit.js';
 import { auditLog, type AdminAuditEvent } from '../../util/audit.js';
@@ -152,28 +150,32 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const user = interaction.options.getUser('user', true);
     const db = getGuildDb(interaction.guildId!);
     const guildId = interaction.guildId!;
-    const res = addGuildAdmin(db, guildId, user.id);
-    if (res === 1) {
-      await interaction.reply({ content: `Added <@${user.id}> as guild admin.` });
-    } else {
-      await interaction.reply({ content: `No change; already guild admin.`, flags: MessageFlags.Ephemeral });
-    }
+    ensureAdminAttached(db);
+    addGuildAdmin(db, guildId, user.id);
+    await interaction.reply({
+      content: `Added <@${user.id}> as guild admin.`,
+      allowedMentions: { users: [] }
+    });
     return;
   }
   else if (sub === 'promote') {
     await requireSuper(interaction);
     const user = interaction.options.getUser('user', true);
     const db = getGuildDb(interaction.guildId!);
-    storeAddAdmin(db, user.id, 'SUPER');
-    await interaction.reply({ content: `Promoted <@${user.id}> to SUPER.`, flags: MessageFlags.Ephemeral });
+    ensureAdminAttached(db);
+    // Promote to global super: insert into attached admin.super_admins
+    db.prepare(`INSERT OR IGNORE INTO admin.super_admins(user_id) VALUES(?)`).run(user.id);
+    await interaction.reply({ content: `Promoted <@${user.id}> to SUPER.` });
     return;
   }
   else if (sub === 'demote') {
     await requireSuper(interaction);
     const user = interaction.options.getUser('user', true);
     const db = getGuildDb(interaction.guildId!);
-    storeAddAdmin(db, user.id, 'ADMIN');
-    await interaction.reply({ content: `Demoted <@${user.id}> to ADMIN.`, flags: MessageFlags.Ephemeral });
+    ensureAdminAttached(db);
+    // Demote: remove from global super list
+    db.prepare(`DELETE FROM admin.super_admins WHERE user_id = ?`).run(user.id);
+    await interaction.reply({ content: `Demoted <@${user.id}> to ADMIN.` });
     return;
   }
   else if (sub === 'remove') {
@@ -181,12 +183,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const user = interaction.options.getUser('user', true);
     const db = getGuildDb(interaction.guildId!);
     const guildId = interaction.guildId!;
-    const changes = removeGuildAdmin(db, guildId, user.id);
-    if (changes > 0) {
-      await interaction.reply({ content: `Removed <@${user.id}> from guild admins.` });
-    } else {
-      await interaction.reply({ content: `No change; not a guild admin.`, flags: MessageFlags.Ephemeral });
-    }
+    ensureAdminAttached(db);
+    const res = db.prepare(`DELETE FROM admin.guild_admins WHERE guild_id = ? AND user_id = ?`).run(guildId, user.id);
+    const changed = Number(res?.changes || 0) > 0;
+    await interaction.reply({ content: changed ? `Removed <@${user.id}> from guild admins.` : `No change; not a guild admin.` });
     return;
   }
   else if (sub === 'give') {
@@ -293,18 +293,24 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       await interaction.reply({ flags: MessageFlags.Ephemeral, content: 'Failed to remove super admin (ERR-ADMIN-REMOVE).' }).catch(() => { });
     }
   } else if (sub === 'list') {
-    // Public: visible to everyone. Use defer+edit to avoid duplicate reply.
-    await safeDefer(interaction, { ephemeral: false });
+    // Public: visible to everyone
     const db = getGuildDb(interaction.guildId!);
-    const { superIds, adminIds } = listAdminsForGuild(db, interaction.guildId!);
-    const guild = interaction.guild!;
-    const resolveMention = (uid: string) => formatMentionInGuild(guild, uid);
-    const embed = adminListEmbed({ guild, superIds, adminIds, resolveMention });
-    await interaction.editReply({ embeds: [embed], components: [] });
+    ensureAdminAttached(db);
+    const supers = getSupers(db).map(r => `<@${r.user_id}>`);
+    const guildAdmins = getPerGuildAdmins(db, interaction.guildId!).map(r => `<@${r.user_id}>`);
+    // Build embed inline to avoid stale caches
+    const eb = themedEmbed(getGuildTheme(interaction.guildId), 'Admins', '')
+      .addFields(
+        { name: 'Global SUPER', value: supers.length ? supers.join('\n') : '(none)' },
+        { name: 'Guild ADMIN', value: guildAdmins.length ? guildAdmins.join('\n') : '(none)' },
+      );
+    await interaction.reply({ embeds: [eb] });
   } else if (sub === 'whoami') {
     const db = getGuildDb(interaction.guildId!);
-    const r = storeGetRole(db, interaction.user.id) || 'ADMIN';
-    const role = r;
+    ensureAdminAttached(db);
+    const role = storeIsSuper(db, interaction.user.id)
+      ? 'super'
+      : (storeIsGuildAdmin(db, interaction.guildId!, interaction.user.id) ? 'admin' : 'user');
     const theme = getGuildTheme(interaction.guildId);
     const card = await generateCard({ layout: 'Notice', theme, payload: { title: 'Role', message: `You are ${role}.` } });
     const file = new AttachmentBuilder(card.buffer, { name: card.filename });

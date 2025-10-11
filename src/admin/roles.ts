@@ -4,7 +4,7 @@ import { getGuildTheme } from '../ui/theme.js';
 import { themedEmbed } from '../ui/embeds.js';
 import { getGlobalAdminDb, getGuildDb } from '../db/connection.js';
 import { superAdminInsertSQL } from '../db/adminSchema.js';
-import { isAdminInGuild, addGuildAdmin as storeAddGuildAdmin, removeGuildAdmin as storeRemoveGuildAdmin } from './adminStore.js';
+import { ensureAttached, isAdminInGuild, addGuildAdmin as storeAddGuildAdmin, removeGuildAdmin as storeRemoveGuildAdmin } from './adminStore.js';
 
 export enum Role { BASE = 'BASE', ADMIN = 'ADMIN', SUPER = 'SUPER' }
 
@@ -50,11 +50,13 @@ export async function requireSuper(interaction: BaseInteraction) {
 
 export function addGuildAdmin(guildId: string, uid: string): void {
   const db = getGuildDb(guildId);
+  try { ensureAttached(db as any); } catch { }
   storeAddGuildAdmin(db, guildId, uid);
 }
 
 export function removeGuildAdmin(guildId: string, uid: string): void {
   const db = getGuildDb(guildId);
+  try { ensureAttached(db as any); } catch { }
   storeRemoveGuildAdmin(db, guildId, uid);
 }
 

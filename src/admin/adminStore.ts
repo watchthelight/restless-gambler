@@ -1,148 +1,125 @@
-import Database from 'better-sqlite3';
-import { ensureAdminAttached } from '../db/adminGlobal.js';
+import type { Database } from 'better-sqlite3';
+import { attachAdmin } from '../db/adminGlobal.js';
 
-export type AdminRole = 'super' | 'admin';
+export type AdminRole = 'super' | 'guild';
 
-function ensureAttached(db: Database.Database) {
-  // Idempotent: safe to call repeatedly
-  ensureAdminAttached(db);
+export function normalizeId(id: string | bigint | number | null | undefined): string {
+  if (id == null) return '';
+  // Always store & compare Snowflakes as raw strings
+  return String(id);
 }
 
-function adminUsersHasRoleColumn(db: Database.Database): boolean {
+export function ensureAttached(db: Database): Database {
+  // idempotent attach; internal function already guards multi-attach
+  return attachAdmin(db);
+}
+
+function hasAdminTable(db: Database, table: string): boolean {
+  try { (db as any).prepare(`PRAGMA admin.table_info(${table})`).all(); return true; } catch { return false; }
+}
+
+function hasMainTable(db: Database, table: string): boolean {
   try {
-    const cols = db.prepare("PRAGMA admin.table_info(admin_users)").all() as Array<{ name: string, notnull?: number }>;
-    return cols.some(c => String(c.name).toLowerCase() === 'role');
-  } catch {
-    return false;
-  }
+    const rows = (db as any).prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`).all(table) as any[];
+    return Array.isArray(rows) && rows.length > 0;
+  } catch { return false; }
 }
 
-export function getRole(db: Database.Database, userId: string): AdminRole | null {
-  ensureAttached(db);
-  // SUPER takes precedence
-  const s = db.prepare(`SELECT 1 FROM admin.super_admins WHERE user_id = ? LIMIT 1`).get(userId) as any;
-  if (s) return 'super';
-  // Then admin_users; support legacy role column if present
-  const hasRole = adminUsersHasRoleColumn(db);
-  if (hasRole) {
-    const row = db.prepare(`SELECT role FROM adminRNK.admin_users WHERE user_id = ?`).get(userId) as { role?: AdminRole } | undefined;
-    return (row?.role as AdminRole) ?? null;
-  } else {
-    const row = db.prepare(`SELECT 1 FROM admin.admin_users WHERE user_id = ? LIMIT 1`).get(userId) as any;
-    return row ? 'admin' : null;
-  }
-}
-
-export function isAdmin(db: Database.Database, userId: string): boolean {
-  const role = getRole(db, userId);
-  return role === 'admin' || role === 'super';
-}
-
-export function isSuper(db: Database.Database, userId: string): boolean {
-  return getRole(db, userId) === 'super';
-}
-
-// Overload declarations
-export function addAdmin(db: Database.Database, userId: string, role: AdminRole): 'inserted' | 'updated' | 'same';
-export function addAdmin(db: Database.Database, guildId: string, userId: string): void;
-export function addAdmin(db: Database.Database, arg1: string, arg2: string, arg3?: AdminRole): 'inserted' | 'updated' | 'same' | void {
-  ensureAttached(db);
-  if (arg3 !== undefined) {
-    // Old signature: (db, userId, role)
-    const userId = arg1;
-    const role = arg3;
-    const current = getRole(db, userId);
-    if (!current) {
-      if (role === 'super') {
-        db.prepare(`INSERT INTO admin.super_admins(user_id) VALUES(?)`).run(userId);
-        return 'inserted';
-      } else {
-        const hasRole = adminUsersHasRoleColumn(db);
-        if (hasRole) db.prepare(`INSERT INTO admin.admin_users(user_id, role) VALUES(?, 'admin')`).run(userId);
-        else db.prepare(`INSERT INTO admin.admin_users(user_id) VALUES(?)`).run(userId);
-        return 'inserted';
-      }
+export function isSuper(db: Database, userId: string | bigint | number): boolean {
+  const uid = normalizeId(userId);
+  // Prefer attached global table
+  try {
+    if (hasAdminTable(db, 'super_admins')) {
+      const row = db.prepare(`SELECT 1 FROM admin.super_admins WHERE user_id = ? LIMIT 1`).get(uid);
+      return !!row;
     }
-    if (current === role) return 'same';
-    // Move between sets
-    if (role === 'super') {
-      // Demote from admin_users if present; then add to super_admins
-      try { db.prepare(`DELETE FROM admin.admin_users WHERE user_id = ?`).run(userId); } catch { }
-      db.prepare(`INSERT OR IGNORE INTO admin.super_admins(user_id) VALUES(?)`).run(userId);
-      return 'updated';
-    } else {
-      // Remove from super_admins; add to admin_users
-      try { db.prepare(`DELETE FROM admin.super_admins WHERE user_id = ?`).run(userId); } catch { }
-      const hasRole = adminUsersHasRoleColumn(db);
-      if (hasRole) db.prepare(`INSERT OR REPLACE INTO admin.admin_users(user_id, role) VALUES(?, 'admin')`).run(userId);
-      else db.prepare(`INSERT OR IGNORE INTO admin.admin_users(user_id) VALUES(?)`).run(userId);
-      return 'updated';
+  } catch { /* fall through */ }
+  // Fallback: role-based table in main schema
+  try {
+    if (hasMainTable(db, 'admin_users')) {
+      const row = db.prepare(`SELECT 1 FROM admin_users WHERE user_id = ? AND role='super' AND guild_id IS NULL LIMIT 1`).get(uid);
+      return !!row;
     }
-  } else {
-    // New signature: (db, guildId, userId)
-    const guildId = arg1;
-    const userId = arg2;
-    db.prepare(
-      `INSERT OR IGNORE INTO admin_users (user_id, role, guild_id) VALUES (?, 'admin', ?)`
-    ).run(userId, guildId);
+  } catch { }
+  return false;
+}
+
+export function isGuildAdmin(db: Database, guildId: string, userId: string | bigint | number): boolean {
+  const gid = normalizeId(guildId);
+  const uid = normalizeId(userId);
+  // Prefer attached per-guild table
+  try {
+    if (hasAdminTable(db, 'guild_admins')) {
+      const row = db.prepare(`SELECT 1 FROM admin.guild_admins WHERE guild_id = ? AND user_id = ? LIMIT 1`).get(gid, uid);
+      return !!row;
+    }
+  } catch { /* fall back */ }
+  // Fallback: role-scoped admin_users in main schema
+  try {
+    if (hasMainTable(db, 'admin_users')) {
+      const row = db.prepare(`SELECT 1 FROM admin_users WHERE user_id = ? AND role='admin' AND guild_id = ? LIMIT 1`).get(uid, gid);
+      return !!row;
+    }
+  } catch { }
+  return false;
+}
+
+export function addGuildAdmin(db: Database, guildId: string, userId: string): void {
+  const gid = normalizeId(guildId); const uid = normalizeId(userId);
+  try {
+    if (hasAdminTable(db, 'guild_admins')) {
+      db.prepare(`INSERT OR IGNORE INTO admin.guild_admins (guild_id, user_id) VALUES (?, ?)`).run(gid, uid);
+      return;
+    }
+  } catch { }
+  // Fallback to main admin_users
+  db.prepare(`INSERT OR IGNORE INTO admin_users (user_id, role, guild_id) VALUES (?, 'admin', ?)`)
+    .run(uid, gid);
+}
+
+export function removeGuildAdmin(db: Database, guildId: string, userId: string): number {
+  const gid = normalizeId(guildId); const uid = normalizeId(userId);
+  try {
+    if (hasAdminTable(db, 'guild_admins')) {
+      const res = db.prepare(`DELETE FROM admin.guild_admins WHERE guild_id = ? AND user_id = ?`).run(gid, uid);
+      return Number((res as any)?.changes || 0);
+    }
+  } catch { }
+  const res = db.prepare(`DELETE FROM admin_users WHERE user_id = ? AND role='admin' AND guild_id = ?`).run(uid, gid);
+  return Number((res as any)?.changes || 0);
+}
+
+export function getPerGuildAdmins(db: Database, guildId: string): Array<{user_id: string}> {
+  const gid = normalizeId(guildId);
+  try {
+    if (hasAdminTable(db, 'guild_admins')) {
+      return db.prepare(`SELECT user_id FROM admin.guild_admins WHERE guild_id = ? ORDER BY user_id`).all(gid) as any[];
+    }
+  } catch { }
+  if (hasMainTable(db, 'admin_users')) {
+    return db.prepare(`SELECT user_id FROM admin_users WHERE role='admin' AND guild_id = ? ORDER BY user_id`).all(gid) as any[];
   }
+  return [] as any[];
 }
 
-export function removeAdmin(db: Database.Database, userId: string): number;
-export function removeAdmin(db: Database.Database, guildId: string, userId: string): void;
-export function removeAdmin(db: Database.Database, arg1: string, arg2?: string): number | void {
-  ensureAttached(db);
-  if (arg2 === undefined) {
-    // Old signature: (db, userId)
-    const userId = arg1;
-    let changes = 0;
-    try { const res = db.prepare(`DELETE FROM admin.admin_users WHERE user_id = ?`).run(userId); changes += Number(res.changes || 0); } catch { }
-    try { const res = db.prepare(`DELETE FROM admin.super_admins WHERE user_id = ?`).run(userId); changes += Number(res.changes || 0); } catch { }
-    return changes;
-  } else {
-    // New signature: (db, guildId, userId)
-    const guildId = arg1;
-    const userId = arg2;
-    db.prepare(`DELETE FROM admin_users WHERE user_id = ? AND role = 'admin' AND guild_id = ?`)
-      .run(userId, guildId);
+export function getSupers(db: Database): Array<{user_id: string}> {
+  try {
+    if (hasAdminTable(db, 'super_admins')) {
+      return db.prepare(`SELECT user_id FROM admin.super_admins ORDER BY user_id`).all() as any[];
+    }
+  } catch { }
+  if (hasMainTable(db, 'admin_users')) {
+    return db.prepare(`SELECT user_id FROM admin_users WHERE role='super' AND guild_id IS NULL ORDER BY user_id`).all() as any[];
   }
+  return [] as any[];
 }
 
-export function listAdmins(db: Database.Database): Array<{ user_id: string; role: AdminRole }> {
-  ensureAttached(db);
-  const hasRole = adminUsersHasRoleColumn(db);
-  const admins = hasRole
-    ? db.prepare(`SELECT user_id, role FROM admin.admin_users`).all() as Array<{ user_id: string; role: AdminRole }>
-    : (db.prepare(`SELECT user_id, 'admin' AS role FROM admin.admin_users`).all() as Array<{ user_id: string; role: AdminRole }>);
-  const supers = db.prepare(`SELECT user_id, 'super' AS role FROM admin.super_admins`).all() as Array<{ user_id: string; role: AdminRole }>;
-  return [...supers, ...admins].sort((a, b) => (a.role === b.role ? a.user_id.localeCompare(b.user_id) : (a.role === 'super' ? -1 : 1)));
+export function isAdminInGuild(db: Database, guildId: string, userId: string): boolean {
+  return isSuper(db, userId) || isGuildAdmin(db, guildId, userId);
 }
 
-export function addGuildAdmin(db: Database.Database, guildId: string, userId: string): number {
-  const result = db.prepare(
-    `INSERT OR IGNORE INTO admin_users (user_id, role, guild_id) VALUES (?, 'admin', ?)`
-  ).run(userId, guildId);
-  return result.changes;
-}
-
-export function removeGuildAdmin(db: Database.Database, guildId: string, userId: string): number {
-  const result = db.prepare(`DELETE FROM admin_users WHERE user_id = ? AND role = 'admin' AND guild_id = ?`)
-    .run(userId, guildId);
-  return result.changes;
-}
-
-export function listAdminsForGuild(db: Database.Database, guildId: string): { superIds: string[]; adminIds: string[] } {
-  const superRows = db.prepare(`SELECT user_id FROM admin_users WHERE role='super' AND guild_id IS NULL`).all() as Array<{ user_id: string }>;
-  const adminRows = db.prepare(`SELECT user_id FROM admin_users WHERE role='admin' AND guild_id = ?`).all(guildId) as Array<{ user_id: string }>;
-  return {
-    superIds: superRows.map(r => r.user_id),
-    adminIds: adminRows.map(r => r.user_id),
-  };
-}
-
-export function isAdminInGuild(db: Database.Database, guildId: string, userId: string): boolean {
-  const row = db.prepare(
-    `SELECT 1 FROM admin_users WHERE user_id = ? AND (role='super' AND guild_id IS NULL OR (role='admin' AND guild_id = ?)) LIMIT 1`
-  ).get(userId, guildId);
-  return !!row;
+export function listAdminsForGuild(db: Database, guildId: string): { superIds: string[]; adminIds: string[] } {
+  const supers = getSupers(db).map(r => r.user_id);
+  const admins = getPerGuildAdmins(db, guildId).map(r => r.user_id);
+  return { superIds: supers, adminIds: admins };
 }

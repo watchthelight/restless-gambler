@@ -1,78 +1,52 @@
-import Database from 'better-sqlite3';
+import type { Database } from 'better-sqlite3';
+import DatabaseBetter from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
 
-const ADMIN_DB_BASENAME = 'admin_global.db';
-const ADMIN_SCHEMA = `
-PRAGMA journal_mode=WAL;
-CREATE TABLE IF NOT EXISTS super_admins (
-  user_id TEXT PRIMARY KEY,
-  added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-CREATE TABLE IF NOT EXISTS admin_users (
-  user_id TEXT PRIMARY KEY,
-  added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-`;
+let firstAttachLogged = false;
+const ATTACHED = new WeakSet<Database>();
 
-export function ensureAdminGlobalDb(adminDbPath: string) {
-  const first = !fs.existsSync(adminDbPath);
-  const db = new (Database as any)(adminDbPath);
-  if (first) db.exec(ADMIN_SCHEMA);
-  else db.exec(`PRAGMA journal_mode=WAL;`);
-  db.close();
+export function getAdminDbPath(): string {
+  return path.resolve('data', 'admin_global.db');
 }
 
-// Where admin_global.db lives by default
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-const ADMIN_DB_PATH = path.join(DATA_DIR, ADMIN_DB_BASENAME);
-
-// Per-connection cache so ATTACH happens once
-const ATTACHED = new WeakSet<Database.Database>();
-
-/**
- * Idempotently attach the global admin DB to a guild DB connection as schema "admin".
- * Safe to call many times across the codebase.
- */
-export function ensureAdminAttached(db: Database.Database, logger?: { debug?: Function }): void {
-  if (ATTACHED.has(db)) return;
-
-  // If already attached (e.g., from a previous phase), mark and exit
+// Idempotently attach the admin DB as schema 'admin' to the given connection.
+export function attachAdmin(db: Database): Database {
+  if (ATTACHED.has(db)) return db;
+  // If already attached under name 'admin', mark and return
   try {
-    const list = db.pragma('database_list', { simple: false }) as Array<{ name: string }>;
+    const list = (db as any).pragma?.('database_list', { simple: false }) as Array<{ name: string }> | undefined;
     if (Array.isArray(list) && list.some(r => String(r?.name).toLowerCase() === 'admin')) {
       ATTACHED.add(db);
-      logger?.debug?.({ msg: 'admin_db_attach_skipped_already_listed' });
-      return;
+      return db;
     }
   } catch { /* ignore */ }
 
-  // Ensure file exists
-  if (!fs.existsSync(ADMIN_DB_PATH)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-    // file will be created by SQLite on first write
+  const p = getAdminDbPath();
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  // Attach as schema "admin"
+  db.exec(`ATTACH DATABASE '${p.replace(/'/g, "''")}' AS admin;`);
+  // Create tables if not exist
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS admin.super_admins (user_id TEXT PRIMARY KEY);
+    CREATE TABLE IF NOT EXISTS admin.guild_admins (guild_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (guild_id, user_id));
+  `);
+  // one-time info log only
+  if (!firstAttachLogged) {
+    console.debug({ msg: 'admin_db_attached', path: p });
+    firstAttachLogged = true;
   }
-
-  try {
-    // Use parameter binding; avoid string interpolation issues on Windows paths
-    db.prepare('ATTACH DATABASE ? AS admin').run(ADMIN_DB_PATH);
-    ATTACHED.add(db);
-    logger?.debug?.({ msg: 'admin_db_attached', path: ADMIN_DB_PATH });
-  } catch (err: any) {
-    // If another path already attached or duplicate attach raced, mark and continue.
-    if (typeof err?.message === 'string' && /already in use/i.test(err.message)) {
-      ATTACHED.add(db);
-      logger?.debug?.({ msg: 'admin_db_attach_already_in_use', note: 'treated as attached' });
-      return;
-    }
-    throw err;
-  }
+  ATTACHED.add(db);
+  return db;
 }
 
-/** Returns true if user is super admin OR admin user. Assumes ensureAdminAttached already called. */
-export function isAdminUser(db: Database.Database, userId: string): boolean {
-  const superRow = db.prepare(`SELECT 1 FROM admin.super_admins WHERE user_id = ?`).get(userId);
-  if (superRow) return true;
-  const adminRow = db.prepare(`SELECT 1 FROM admin.admin_users WHERE user_id = ?`).get(userId);
-  return !!adminRow;
+// Back-compat wrappers for existing imports
+export function ensureAdminAttached(db: Database, _logger?: { debug?: Function }): void {
+  attachAdmin(db);
+}
+
+export function isAdminUser(_db: Database, _userId: string): boolean {
+  // Deprecated helper; not used in new flow.
+  // Keeping exported for compatibility; prefer store-based checks per guild.
+  return false;
 }

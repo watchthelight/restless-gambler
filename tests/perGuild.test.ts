@@ -1,6 +1,8 @@
 import { beforeAll, describe, expect, jest, test } from '@jest/globals';
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { closeAll } from '../src/db/connection.js';
 
 jest.mock('../src/cli/ui', () => ({
   ui: {
@@ -11,15 +13,18 @@ jest.mock('../src/cli/ui', () => ({
 }));
 
 describe('per-guild databases', () => {
-  const baseDir = path.resolve('./data/test-guilds');
+  let baseDir = path.resolve('./data/test-guilds');
   const G1 = '111111111111111111';
   const G2 = '222222222222222222';
 
   beforeAll(() => {
+    try { closeAll(); } catch { }
+    // Use a fresh temp directory per run to avoid leftover WAL files on Windows
+    baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rg-guilds-'));
     process.env.DATA_DIR = baseDir;
     process.env.ADMIN_GLOBAL_DB_PATH = ':memory:';
-    // Clean test dir
-    try { fs.rmSync(baseDir, { recursive: true, force: true }); } catch { }
+    // Ensure the directory exists
+    try { fs.mkdirSync(baseDir, { recursive: true }); } catch { }
   });
 
   test('economy state does not cross guilds', async () => {
@@ -71,4 +76,3 @@ describe('per-guild databases', () => {
     expect(row && typeof row.balance === 'number').toBe(true);
   });
 });
-

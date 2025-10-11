@@ -7,6 +7,9 @@
 - Added tests for join/leave and balance effects
 - Files: [src/games/holdem/store.ts](src/games/holdem/store.ts), [src/games/holdem/view.ts](src/games/holdem/view.ts), [src/games/holdem/commands.ts](src/games/holdem/commands.ts), [src/games/holdem/tests/join.test.ts](src/games/holdem/tests/join.test.ts), [src/db/migrations/guild/003_holdem_core.sql](src/db/migrations/guild/003_holdem_core.sql)
 
+2025-10-10 — `/loan apply`
+- Added `/loan apply amount:<int> apr:<bps> term_days:<int>` which validates against user-specific offers, creates the loan, credits the wallet, and returns a confirmation card with quick-pay buttons.
+
 Verification:
 - Build, migrate, start. Run `/holdem create` then verify the embed shows blinds and buy-in range.
 - `/holdem join table:<id> buyin:<min..max>` succeeds; `/holdem status` shows your seat and stack.
@@ -256,3 +259,9 @@ Verified both roles can execute commands; others receive the standard dev-only m
 - Economy cards now show pretty value plus secondary `exact: 1,234,567` line. Buttons removed.
 - Eliminated InteractionAlreadyReplied by using defer+editReply across econ commands.
 - Blackjack “Play Again” now acknowledges the button and posts a new message with a fresh hand; only original player can use it.
+2025-10-10 — Public pretty Admin List
+- `/admin list` now renders the badge-styled card (Super Admin + Current Admins) and is visible to everyone (non-ephemeral).
+- Mentions use `<@id>`; dates show as YYYY-MM-DD; avoids duplicate replies via defer+editReply.
+
+2025-10-10 — `/loan apply`
+- Added `/loan apply amount:<int> apr:<bps> term_days:<int>` which validates against user-specific offers, creates the loan, credits the wallet, and returns a confirmation card with quick-pay buttons.

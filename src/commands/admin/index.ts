@@ -21,6 +21,8 @@ import { formatBalance, formatExact } from '../../util/formatBalance.js';
 import { safeDefer } from '../../interactions/reply.js';
 import { isTestEnv } from '../../util/env.js';
 import log from '../../cli/logger.js';
+import { adminListEmbed } from './view.js';
+import { listToggles, setToggle } from '../../config/toggles.js';
 
 export async function performReboot(): Promise<void> {
   // In tests, DO NOT schedule timers or exit the process.
@@ -55,7 +57,7 @@ export const data = new SlashCommandBuilder()
   .addSubcommand((s) => s.setName('add').setDescription('Add admin for this guild').addUserOption((o) => o.setName('user').setDescription('Target user').setRequired(true)))
   .addSubcommand((s) => s.setName('super-add').setDescription('Add super admin (SUPER only)').addUserOption((o) => o.setName('user').setDescription('Target user').setRequired(true)))
   .addSubcommand((s) => s.setName('remove').setDescription('Remove admin (SUPER only)').addStringOption((o) => o.setName('user').setDescription('User ID or mention').setRequired(true)))
-  .addSubcommand((s) => s.setName('list').setDescription('List admins'))
+  .addSubcommand((s) => s.setName('list').setDescription('Show the super admin and current admins (visible to all)'))
   .addSubcommand((s) => s.setName('whoami').setDescription('Show your role'))
   .addSubcommand((s) => s.setName('reboot').setDescription('Reboot the bot (Admin+)'))
   .addSubcommand((s) =>
@@ -90,6 +92,25 @@ export const data = new SlashCommandBuilder()
     s
       .setName('refresh-status')
       .setDescription('Recompute counts and update the bot presence'))
+  .addSubcommand((s) =>
+    s
+      .setName('toggles')
+      .setDescription('View or flip command toggles')
+      .addStringOption((o) =>
+        o
+          .setName('action')
+          .setDescription('view | enable | disable')
+          .setRequired(true)
+          .addChoices({ name: 'view', value: 'view' }, { name: 'enable', value: 'enable' }, { name: 'disable', value: 'disable' }),
+      )
+      .addStringOption((o) =>
+        o
+          .setName('command')
+          .setDescription('command name (for enable/disable)')
+          .setAutocomplete(true)
+      )
+      .addStringOption((o) => o.setName('reason').setDescription('optional reason when disabling')),
+  )
   .addSubcommandGroup(group =>
     group.setName("ui")
       .setDescription("UI preferences")
@@ -166,42 +187,29 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       await interaction.reply({ flags: MessageFlags.Ephemeral, content: 'Failed to remove super admin (ERR-ADMIN-REMOVE).' }).catch(() => { });
     }
   } else if (sub === 'list') {
-    await requireAdmin(interaction);
+    // Public: visible to everyone. Use defer+edit to avoid duplicate reply.
+    await safeDefer(interaction, { ephemeral: false });
     const adminDb = getGlobalAdminDb();
     const db = getGuildDb(interaction.guildId!);
 
-    // Super admin header (usually exactly one)
     const superRow = adminDb.prepare(`
       SELECT user_id, COALESCE(created_at, added_at) AS created_at
       FROM super_admins
       ORDER BY COALESCE(created_at, added_at) DESC
       LIMIT 1
     `).get() as { user_id: string; created_at: number } | undefined;
-    const superLine = superRow
-      ? `<@${superRow.user_id}> (Super Admin)`
-      : "(none)";
+    const superId = superRow?.user_id || '(none)';
 
-    // Normal admins in this guild
     const rows = db.prepare(`
       SELECT user_id, added_at
       FROM guild_admins
       ORDER BY added_at DESC
     `).all() as { user_id: string; added_at: number }[];
 
-    const adminLines = rows.map(r => {
-      const ts = Number(r.added_at) * 1000;
-      const when = Number.isFinite(ts) ? new Date(ts).toISOString().split('T')[0] : "unknown";
-      return `• <@${r.user_id}> — ${when}`;
-    });
-
-    const theme = getGuildTheme(interaction.guildId);
-    const embed = themedEmbed(theme, 'Admin List')
-      .addFields(
-        { name: 'Super Admin', value: superLine, inline: false },
-        { name: 'Current Admins', value: adminLines.length ? adminLines.join('\n') : 'No normal admins yet.', inline: false }
-      );
-
-    await interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [embed] });
+    const admins = rows.map(r => ({ userId: r.user_id, addedAt: Number(r.added_at) * 1000 }));
+    const resolveMention = (uid: string) => `<@${uid}>`;
+    const embed = adminListEmbed({ superId, admins, resolveMention });
+    await interaction.editReply({ embeds: [embed], components: [] });
   } else if (sub === 'whoami') {
     const role = isSuperAdmin(interaction.user.id) ? 'SUPER' : 'ADMIN';
     const theme = getGuildTheme(interaction.guildId);
@@ -311,6 +319,31 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const embed = walletEmbed({ title: 'Funds Removed', headline: `${user.tag} -${takenText}. New balance:`, pretty, exact });
     console.log(JSON.stringify({ msg: 'admin_action', action: 'take', target: user.id, amount: actualTaken, admin: interaction.user.id }));
     await interaction.editReply({ embeds: [embed], components: [] });
+  }
+  else if (sub === 'toggles') {
+    await requireAdmin(interaction);
+    const action = interaction.options.getString('action', true);
+    const cmd = interaction.options.getString('command')?.trim();
+    const why = interaction.options.getString('reason') ?? undefined;
+    if (action === 'view') {
+      const rows = listToggles();
+      const theme = getGuildTheme(interaction.guildId);
+      const lines = rows.length
+        ? rows.map((r) => `• /${r.name} — ${r.enabled ? 'enabled' : 'disabled'}${r.reason ? ` — ${r.reason}` : ''}`).join('\n')
+        : '(none set, all enabled)';
+      const embed = themedEmbed(theme, 'Command Toggles', lines);
+      return interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [embed] });
+    }
+    if (!cmd) return interaction.reply({ flags: MessageFlags.Ephemeral, content: 'Provide a command name.' });
+    if (action === 'enable') {
+      setToggle(cmd, true);
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `Enabled /${cmd}.` });
+    }
+    if (action === 'disable') {
+      setToggle(cmd, false, why);
+      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `Disabled /${cmd}${why ? ` — ${why}` : ''}.` });
+    }
+    return interaction.reply({ flags: MessageFlags.Ephemeral, content: 'Unknown action.' });
   }
   else if (sub === 'reset') {
     await requireAdmin(interaction);

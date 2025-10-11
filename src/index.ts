@@ -11,6 +11,8 @@ import boxen from 'boxen';
 import { VERBOSE, vlog } from './util/verbose.js';
 import { resolveRuntime } from './config/runtime.js';
 import { updateBotPresence } from "./metrics/project.js";
+import { loadConfig, startTogglesWatcher } from './config/toggles.js';
+import { startLoanReminderLoop } from "./loans/reminders.js";
 
 // Suppress console output temporarily while loading dotenv (to hide emoji tips)
 const originalLog = console.log;
@@ -55,6 +57,10 @@ async function main() {
 
   ui.banner();
 
+  // Startup safety: ensure config contains all toggles and persist if needed
+  try { loadConfig(); } catch {}
+  try { startTogglesWatcher(); } catch {}
+
   const client = createClient();
   try {
     const anyClient: any = client as any;
@@ -96,6 +102,11 @@ async function main() {
     if (Number.isFinite(minutes) && minutes > 0) {
       setInterval(() => { updateBotPresence(client, console); }, minutes * 60 * 1000);
     }
+
+    // Background: loan reminders (non-blocking)
+    try {
+      startLoanReminderLoop(client, log);
+    } catch { }
   });
   let shuttingDown = false;
 
@@ -172,6 +183,11 @@ async function main() {
     const { getSlashCommands } = await import('./commands/slash/index.js');
     const list = getSlashCommands().map((c: any) => ({ name: c?.name || c?.data?.name || 'unknown' }));
     vlog({ msg: 'commands', loaded: list });
+  } catch { }
+  // Non-blocking startup sweep for stale loan accrual
+  try {
+    const { kickoffStartupAccrualSweep } = await import('./loans/store.js');
+    kickoffStartupAccrualSweep();
   } catch { }
   const doRegister = String(process.env.REGISTER_ON_START || '').toLowerCase() === 'true';
   if (doRegister) {

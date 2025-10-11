@@ -9,6 +9,7 @@ import { data as ConfigCommand, handleConfig } from '../config.js';
 import * as HoldemCmds from '../../games/holdem/commands.js';
 import * as DevCmd from '../dev.js';
 import * as AdminCmd from '../admin/index.js';
+import * as LoanCmd from '../loan/index.js';
 import { requireAdmin } from '../../admin/roles.js';
 import * as AdminRepair from './admin-repair.js';
 import * as Ping from './ping.js';
@@ -60,6 +61,7 @@ export function getSlashCommands(): Slash[] {
   add(DevDemo);
   add(AdminReboot);
   add({ name: AdminRepair.data.name, data: AdminRepair.data as Builder, run: AdminRepair.run });
+  add({ name: LoanCmd.data.name, data: LoanCmd.data as Builder, run: LoanCmd.execute as any });
   add({ name: Ping.data.name, data: Ping.data as Builder, run: Ping.run });
   add({ name: Theme.data.name, data: Theme.data as Builder, run: Theme.execute as any });
   // Economy set (skip built-in help to avoid duplicate)

@@ -11,19 +11,22 @@ import {
 // import { admin } from "../commands/admin/index.js";
 // ...
 import { allCommandBuilders } from "./util-builders.js"; // create this if you don't have a central export
+import { loadConfig } from "../config/toggles.js";
 
 export function buildCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
     return allCommandBuilders().map(b => b.toJSON());
 }
 
-export async function registerGlobal(rest: REST, appId: string, cmds: RESTPostAPIApplicationCommandsJSONBody[]) {
+export async function registerGlobal(rest: REST, appId: string, cmds: RESTPostAPIApplicationCommandsJSONBody[], log: any = console) {
     const res = await rest.put(Routes.applicationCommands(appId), { body: cmds }) as any[];
-    return Array.isArray(res) ? res.length : 0;
+    const count = Array.isArray(res) ? res.length : 0;
+    log.info?.({ msg: "global_registered", count });
+    return count;
 }
 
 async function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
 
-export async function purgeGuildCommands(rest: REST, appId: string, guildId: string, delayMs = 150) {
+export async function purgeGuildCommands(rest: REST, appId: string, guildId: string, delayMs = 150, log: any = console) {
     const list = await rest.get(Routes.applicationGuildCommands(appId, guildId)) as RESTGetAPIApplicationGuildCommandsResult;
     let purged = 0;
     for (const cmd of list) {
@@ -33,7 +36,29 @@ export async function purgeGuildCommands(rest: REST, appId: string, guildId: str
             await sleep(delayMs);
         } catch { }
     }
+    log.info?.({ msg: "purged_guild", guildId, count: list.length });
     return purged;
+}
+
+async function purgeDisabledGlobals(rest: REST, appId: string, log: any = console) {
+    const cfg = loadConfig();
+    const enabledNames = new Set(
+        Object.entries(cfg.commands)
+            .filter(([, v]) => v.enabled !== false)
+            .map(([k]) => k)
+    );
+    const globals = await rest.get(Routes.applicationCommands(appId)) as any[];
+    const toDelete = globals.filter(c => !enabledNames.has(c.name));
+    let del = 0;
+    for (const c of toDelete) {
+        try {
+            await rest.delete(Routes.applicationCommand(appId, c.id));
+            del++;
+            await sleep(150);
+        } catch { }
+    }
+    if (del) log.warn?.({ msg: "purged_disabled_globals", count: del });
+    return del;
 }
 
 export async function syncAll(rest: REST, client: any, log: any = console) {
@@ -49,14 +74,15 @@ export async function syncAll(rest: REST, client: any, log: any = console) {
         log.warn?.({ msg: "app_info_fetch_failed", err: String(e) });
     }
     const cmds = buildCommands();
-    const globalCount = await registerGlobal(rest, appId, cmds);
+    const globalCount = await registerGlobal(rest, appId, cmds, log);
     const purged: { guildId: string; count: number }[] = [];
     for (const [gid] of client.guilds.cache) {
-        const count = await purgeGuildCommands(rest, appId, gid);
+        const count = await purgeGuildCommands(rest, appId, gid, 150, log);
         purged.push({ guildId: gid, count });
     }
-    log.info("command_sync", "register", { global: globalCount, purged });
-    return { globalCount, purged };
+    const purgedDisabled = await purgeDisabledGlobals(rest, appId, log);
+    log.info?.({ msg: "command_sync", global: globalCount, purged, purgedDisabled });
+    return { globalCount, purged, purgedDisabled };
 }
 
 export async function listGlobal(rest: REST) {

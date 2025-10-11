@@ -10,12 +10,14 @@ import { ensureBlackjackSessionsSchema } from "../game/blackjack/sessionStore.js
 
 type DBKind = "data" | "admin";
 
-const defaults = {
-  legacyData: process.env.DATA_DB_PATH ?? "./data/data.db",
-  legacyAdmin: process.env.ADMIN_DB_PATH ?? "./data/admin.db",
-  dataDir: process.env.DATA_DIR ?? "./data/guilds",
-  adminGlobal: process.env.ADMIN_GLOBAL_DB_PATH ?? "./data/admin_global.db",
-};
+function getCfg() {
+  return {
+    legacyData: process.env.DATA_DB_PATH ?? "./data/data.db",
+    legacyAdmin: process.env.ADMIN_DB_PATH ?? "./data/admin.db",
+    dataDir: process.env.DATA_DIR ?? "./data/guilds",
+    adminGlobal: process.env.ADMIN_GLOBAL_DB_PATH ?? "./data/admin_global.db",
+  } as const;
+}
 
 const guildCache = new Map<string, Database.Database>();
 let adminGlobalDb: Database.Database | null = null;
@@ -86,7 +88,7 @@ function migrateGlobalAdminDb(db: Database.Database) {
 export function getGuildDb(guildId: string): Database.Database {
   const cached = guildCache.get(guildId);
   if (cached) return cached;
-  const absDir = path.resolve(defaults.dataDir);
+  const absDir = path.resolve(getCfg().dataDir);
   ensureDirExists(absDir);
   const file = path.join(absDir, `${guildId}.db`);
   const db = openDb(file);
@@ -131,7 +133,8 @@ export function getGuildDb(guildId: string): Database.Database {
 
 export function getGlobalAdminDb(): Database.Database {
   if (adminGlobalDb) return adminGlobalDb;
-  const file = defaults.adminGlobal === ':memory:' ? ':memory:' : path.resolve(defaults.adminGlobal);
+  const cfg = getCfg();
+  const file = cfg.adminGlobal === ':memory:' ? ':memory:' : path.resolve(cfg.adminGlobal);
   adminGlobalDb = openDb(file);
   migrateGlobalAdminDb(adminGlobalDb);
   return adminGlobalDb;
@@ -141,7 +144,7 @@ export function getGlobalAdminDb(): Database.Database {
 export function getDB(kind: DBKind): Database.Database {
   if (kind === "admin") return getGlobalAdminDb();
   // For 'data' without guild context, open or create legacy mono DB path (used only by tests/leftovers)
-  const db = openDb(path.resolve(defaults.legacyData));
+  const db = openDb(path.resolve(getCfg().legacyData));
   return db;
 }
 
@@ -157,9 +160,10 @@ export function closeAll() {
 export default { getGuildDb, getGlobalAdminDb, closeAll, getDB };
 
 export function getDbPaths() {
+  const cfg = getCfg();
   return {
-    data_dir: path.resolve(defaults.dataDir),
-    admin_global: path.resolve(defaults.adminGlobal),
-    legacy_data: path.resolve(defaults.legacyData),
+    data_dir: path.resolve(cfg.dataDir),
+    admin_global: path.resolve(cfg.adminGlobal),
+    legacy_data: path.resolve(cfg.legacyData),
   };
 }

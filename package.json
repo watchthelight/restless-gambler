@@ -9,6 +9,7 @@
   "engineStrict": true,
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "postbuild": "shx test -f dist/scripts/seed-toggles.js && node dist/scripts/seed-toggles.js || tsx scripts/seed-toggles.ts",
     "start": "node --no-deprecation dist/index.js",
     "start:pretty": "cross-env CLI_THEME=neo node --no-deprecation dist/index.js",
     "dev": "tsx watch src/index.ts",
@@ -35,6 +36,7 @@
     "start:cli": "node dist/index.js"
   },
   "dependencies": {
+    "chokidar": "^3.6.0",
     "better-sqlite3": "^9.4.0",
     "boxen": "^7.1.1",
     "chalk": "^5.3.0",

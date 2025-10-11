@@ -62,6 +62,28 @@ export async function handleEconomy(interaction: ChatInputCommandInteraction) {
       const pretty = formatBalance(bal);
       const exact = formatExact(bal);
       const embed = walletEmbed({ title: 'Wallet', headline: 'Your balance:', pretty, exact });
+      try {
+        const { getScore } = await import('../loans/credit.js');
+        const { getActiveLoans } = await import('../loans/store.js');
+        const score = getScore(interaction.guildId, interaction.user.id);
+        const loans = getActiveLoans(interaction.guildId, interaction.user.id);
+        const active = loans.filter(l => l.status === 'active').length;
+        const late = loans.filter(l => l.status === 'late').length;
+        const def = loans.filter(l => l.status === 'defaulted').length;
+        const lines: string[] = [];
+        lines.push(`\nCredit score: ${score}/100`);
+        if (loans.length) {
+          lines.push(`Loans: ${active} active${late ? `, ${late} late` : ''}${def ? `, ${def} defaulted` : ''}`);
+          // Oldest loan summary
+          const loan = loans[0];
+          const remaining = (loan.principal - loan.paid_principal) + (loan.accrued_interest - loan.paid_interest);
+          const days = Math.ceil((loan.due_ts - Date.now())/86_400_000);
+          const dueTxt = days >= 0 ? `${days}d` : `${-days}d overdue`;
+          lines.push(`Next due: ${dueTxt} • Remaining: ${formatBalance(Number(remaining))} (exact: ${formatExact(remaining)})`);
+        }
+        const desc = (embed.data.description || '').toString() + lines.join('\n');
+        (embed as any).data.description = desc;
+      } catch { }
       await interaction.editReply({ embeds: [embed], components: [] });
       break;
     }

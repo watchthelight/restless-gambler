@@ -63,6 +63,7 @@ export async function transfer(
         const from = getBalance(guildId, fromUserId);
         if (from < amt) throw new Error('Insufficient balance');
         const to = getBalance(guildId, toUserId);
+        
         const newFrom = from - amt;
         const newTo = to + amt;
         db.prepare(

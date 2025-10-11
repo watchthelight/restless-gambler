@@ -4,11 +4,14 @@ import { resolveRuntime, VISIBILITY_MODE } from '../config/runtime.js';
 import { ui } from '../cli/ui.js';
 import log from '../cli/logger.js';
 import { getSlashCommands } from '../commands/slash/index.js';
+import { handleAutocomplete } from './autocomplete.js';
 import { handleSlotsButton } from './buttons/slots.js';
 import * as EconButtons from './buttons/econ.js';
 import * as BlackjackSlash from '../commands/slash/blackjack.js';
 import * as RouletteCmd from '../games/roulette/commands.js';
 import * as AdminCmd from '../commands/admin/index.js';
+import * as LoanCmd from '../commands/loan/index.js';
+import { isEnabled, reason as disabledReason } from '../config/toggles.js';
 // Removed: amount exact/copy handlers and listeners (Exact/Copy buttons deprecated)
 import { getGuildDb } from '../db/connection.js';
 import { migrateGuildDb } from '../db/migrateGuild.js';
@@ -42,6 +45,9 @@ export function initInteractionRouter(client: Client) {
   client.on('interactionCreate', async (i: Interaction) => {
     // Non-slash interactions routed here as well
     try {
+      if (i.isAutocomplete()) {
+        return handleAutocomplete(i as any);
+      }
       if (i.isButton()) {
         if (i.customId.startsWith('slots:')) {
           await safeDefer(i, true);
@@ -97,8 +103,30 @@ export function initInteractionRouter(client: Client) {
           }
           return;
         }
+        if (i.customId.startsWith('loan:')) {
+          await safeDefer(i, true);
+          try {
+            await (LoanCmd as any).handleButton(i);
+          } catch (e: any) {
+            await replyError(i, "ERR-COMPONENT", console, { err: String(e) });
+          }
+          return;
+        }
         // Legacy amt:exact/amt:copy buttons are no longer handled.
         return;
+      }
+      // Route selects
+      if ((i as any).isStringSelectMenu && (i as any).isStringSelectMenu()) {
+        const ii: any = i as any;
+        if (ii.customId && String(ii.customId).startsWith('loan:')) {
+          await safeDefer(ii, true);
+          try {
+            await (LoanCmd as any).handleSelect(ii);
+          } catch (e: any) {
+            await replyError(ii, "ERR-COMPONENT", console, { err: String(e) });
+          }
+          return;
+        }
       }
       if (!i.isChatInputCommand()) return;
 
@@ -113,6 +141,13 @@ export function initInteractionRouter(client: Client) {
         }
       }
       const name = i.commandName;
+      if (!isEnabled(name)) {
+        const r = disabledReason(name);
+        await i.reply({
+          content: `⚠️ /${name} is currently disabled${r ? ` — ${r}` : ''}.`,
+        }).catch(() => { });
+        return;
+      }
       let sub: string | null = null;
       try { sub = (i as any).options?.getSubcommand?.(false) ?? null; } catch { sub = null; }
       const who = (i.user && (i.user.tag || i.user.username)) ? `${i.user.tag || i.user.username}#${i.user.id}` : i.user?.id || 'unknown';

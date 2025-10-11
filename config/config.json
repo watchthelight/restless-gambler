@@ -1,0 +1,77 @@
+{
+  "commands": {
+    "roulette": {
+      "enabled": true
+    },
+    "holdem": {
+      "enabled": false,
+      "reason": "maintinence"
+    },
+    "admin": {
+      "enabled": true
+    },
+    "admin-reboot": {
+      "enabled": false
+    },
+    "admin-repair": {
+      "enabled": true
+    },
+    "balance": {
+      "enabled": true
+    },
+    "blackjack": {
+      "enabled": true
+    },
+    "canary": {
+      "enabled": false
+    },
+    "config": {
+      "enabled": true
+    },
+    "cooldown": {
+      "enabled": true
+    },
+    "daily": {
+      "enabled": true
+    },
+    "dev": {
+      "enabled": true
+    },
+    "dev-demo": {
+      "enabled": false
+    },
+    "faucet": {
+      "enabled": false
+    },
+    "gamble": {
+      "enabled": true
+    },
+    "give": {
+      "enabled": true
+    },
+    "help": {
+      "enabled": false
+    },
+    "leaderboard": {
+      "enabled": true
+    },
+    "loan": {
+      "enabled": true
+    },
+    "ping": {
+      "enabled": true
+    },
+    "resetme": {
+      "enabled": true
+    },
+    "slots": {
+      "enabled": true
+    },
+    "theme": {
+      "enabled": true
+    },
+    "transfer": {
+      "enabled": true
+    }
+  }
+}

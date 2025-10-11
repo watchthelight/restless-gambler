@@ -2,6 +2,8 @@ import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionsBitField, 
 import { getGuildDb } from '../db/connection.js';
 import { getSetting, getSettingNum, setSetting } from '../db/kv.js';
 import { makePublicAdmin } from './util/adminBuilder.js';
+import { parseHumanAmount, setMaxBetDisabled, setMaxBetValue, getMaxBet } from '../config/maxBet.js';
+import { jsonStringifySafeBigint } from '../utils/json.js';
 
 export const data = makePublicAdmin(
   new SlashCommandBuilder()
@@ -89,10 +91,26 @@ export async function handleConfig(interaction: ChatInputCommandInteraction) {
       set('slots.min_bet', v);
       set('blackjack.min_bet', v);
     } else if (key === 'max_bet') {
-      const v = String(Math.max(1, Math.floor(parseInt(value, 10) || 1)));
-      set('slots.max_bet', v);
-      set('blackjack.max_bet', v);
-      set('roulette.max_bet', v);
+      // New per-guild max bet config with disable or bigint numeric value
+      const raw = value.trim();
+      const isDisable = /^(disable|off|false|none|unlimited)$/i.test(raw);
+      if (isDisable) {
+        setMaxBetDisabled(db);
+        // audit
+        try { db.prepare('INSERT INTO audit_log(json) VALUES(?)').run(jsonStringifySafeBigint({ msg: 'config_set', key: 'max_bet', value: 'unlimited', guildId: interaction.guildId, admin: interaction.user.id })); } catch {}
+        await interaction.reply({ content: 'Max bet disabled (unlimited).' });
+        return;
+      }
+      try {
+        const limit = parseHumanAmount(raw);
+        setMaxBetValue(db, limit);
+        try { db.prepare('INSERT INTO audit_log(json) VALUES(?)').run(jsonStringifySafeBigint({ msg: 'config_set', key: 'max_bet', value: limit.toString(), guildId: interaction.guildId, admin: interaction.user.id })); } catch {}
+        await interaction.reply({ content: `Max bet set to ${limit.toString()}.` });
+        return;
+      } catch (e: any) {
+        await interaction.reply({ content: `Invalid max bet: ${raw}. Use a number like 10k, 2m, 1_000_000 or "disable".`, flags: MessageFlags.Ephemeral });
+        return;
+      }
     } else if (key === 'faucet_limit') {
       const v = String(Math.max(1, Math.floor(parseInt(value, 10) || 100)));
       set('faucet_limit', v);
@@ -136,8 +154,8 @@ export async function handleConfig(interaction: ChatInputCommandInteraction) {
       const v = getSetting(db, 'slots.min_bet') ?? getSetting(db, 'blackjack.min_bet');
       value = v ?? '10';
     } else if (key === 'max_bet') {
-      const v = getSetting(db, 'slots.max_bet') ?? getSetting(db, 'blackjack.max_bet') ?? getSetting(db, 'roulette.max_bet');
-      value = v ?? '1000';
+      const cur = getMaxBet(db);
+      value = cur.disabled ? 'unlimited' : cur.limit.toString();
     } else if (key === 'faucet_limit') {
       value = getSetting(db, 'faucet_limit') ?? '100';
     } else if (key === 'public_results') {

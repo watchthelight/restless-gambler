@@ -1,4 +1,4 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ButtonInteraction, AttachmentBuilder } from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ButtonInteraction, AttachmentBuilder, MessageFlags } from 'discord.js';
 import { adjustBalance, getBalance } from '../../economy/wallet.js';
 import { themedEmbed } from '../../ui/embeds.js';
 import { BJState, Card } from './types.js';
@@ -14,6 +14,8 @@ import { withUserLuck } from '../../rng/luck.js';
 import { onGambleXP } from '../../rank/xpEngine.js';
 import { rememberUserChannel } from '../../rank/announce.js';
 import { getSetting } from '../../db/kv.js';
+import { getMaxBet } from '../../config/maxBet.js';
+import { toBigInt } from '../../utils/bigint.js';
 
 export const data = new SlashCommandBuilder()
   .setName('blackjack')
@@ -31,6 +33,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const bet = interaction.options.getInteger('bet', true);
   const userId = interaction.user.id;
   const bal = getBalance(interaction.guildId, userId);
+  // Global max_bet gate
+  const maxCfg = getMaxBet(getGuildDb(interaction.guildId));
+  const betBig = toBigInt(bet);
+  if (!maxCfg.disabled && betBig > maxCfg.limit) {
+    await interaction.reply({ content: `Bet exceeds max: ${betBig.toString()} > ${maxCfg.limit.toString()}. Use \`/config set key:max_bet value:<value|disable>\` to change.`, flags: MessageFlags.Ephemeral });
+    return;
+  }
   if (bal < BigInt(bet)) {
     const db = getGuildDb(interaction.guildId);
     const mode = uiExactMode(db, "guild");

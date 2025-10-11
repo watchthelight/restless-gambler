@@ -22,6 +22,8 @@ import { withUserLuck } from '../../rng/luck.js';
 import { onGambleXP } from '../../rank/xpEngine.js';
 import { rememberUserChannel } from '../../rank/announce.js';
 import { getSetting } from '../../db/kv.js';
+import { getMaxBet } from '../../config/maxBet.js';
+import { toBigInt } from '../../utils/bigint.js';
 
 export const data = new SlashCommandBuilder()
   .setName('slots')
@@ -41,6 +43,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // limits
     const db = getGuildDb(interaction.guildId!);
     const { minBet, maxBet } = slotsLimits(db);
+    // Global max_bet gate (guild_config)
+    const max = getMaxBet(db);
+    const betBig = toBigInt(bet);
+    if (!max.disabled && betBig > max.limit) {
+      return safeEdit(interaction, { flags: MessageFlags.Ephemeral, content: `Bet exceeds max: ${betBig.toString()} > ${max.limit.toString()}. Use \`/config set key:max_bet value:<value|disable>\` to change.` });
+    }
     if (bet < minBet) {
       return safeEdit(interaction, { flags: MessageFlags.Ephemeral, content: `Minimum bet is ${formatBolts(minBet)}.` });
     }

@@ -17,6 +17,8 @@ import { withUserLuck } from '../../rng/luck.js';
 import { onGambleXP } from '../../rank/xpEngine.js';
 import { getSetting } from '../../db/kv.js';
 import { rememberUserChannel } from '../../rank/announce.js';
+import { getMaxBet } from '../../config/maxBet.js';
+import { toBigInt } from '../../utils/bigint.js';
 
 export async function handleSlotsButton(interaction: ButtonInteraction) {
   const [prefix, action, userId, betStr] = interaction.customId.split(':');
@@ -29,6 +31,16 @@ export async function handleSlotsButton(interaction: ButtonInteraction) {
   if (!interaction.guildId) { await safeReply(interaction, { content: 'This bot only works in servers.', flags: MessageFlags.Ephemeral }); return; }
   rememberUserChannel(interaction.guildId, interaction.user.id, interaction.channelId);
   const current = getBalance(interaction.guildId, userId);
+  // Global max gate
+  try {
+    const db = getGuildDb(interaction.guildId);
+    const max = getMaxBet(db);
+    const betBig = toBigInt(bet);
+    if (!max.disabled && betBig > max.limit) {
+      await safeReply(interaction, { content: `Bet exceeds max: ${betBig.toString()} > ${max.limit.toString()}. Use \`/config set key:max_bet value:<value|disable>\` to change.`, flags: MessageFlags.Ephemeral });
+      return;
+    }
+  } catch {}
   if (current < BigInt(bet)) {
     const db = getGuildDb(interaction.guildId);
     const mode = uiExactMode(db, "guild");

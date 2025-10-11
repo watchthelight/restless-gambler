@@ -223,7 +223,8 @@ const EXT: Record<string, Omit<HelpDoc, "name">> = {
     usage: ["/config get key:<name>", "/config set key:<name> value:<value>"],
     examples: [
       "/config get key:min_bet",
-      "/config set key:max_bet value:5000",
+      "/config set key:max_bet value:disable",
+      "/config set key:max_bet value:2m",
       "/config set key:theme value:purple",
       "/config get key:faucet_limit",
     ],

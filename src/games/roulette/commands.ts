@@ -18,6 +18,8 @@ import { withUserLuck } from '../../rng/luck.js';
 import { onGambleXP } from '../../rank/xpEngine.js';
 import { rememberUserChannel } from '../../rank/announce.js';
 import { getSetting } from '../../db/kv.js';
+import { getMaxBet } from '../../config/maxBet.js';
+import { toBigInt } from '../../utils/bigint.js';
 
 export const data = new SlashCommandBuilder()
   .setName('roulette')
@@ -83,6 +85,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
   } catch { }
 
+  // Global max_bet gate
+  const max = getMaxBet(db);
+  const betBig = toBigInt(betAmount);
+  if (!max.disabled && betBig > max.limit) {
+    await interaction.reply({ content: `Bet exceeds max: ${betBig.toString()} > ${max.limit.toString()}. Use \`/config set key:max_bet value:<value|disable>\` to change.`, flags: MessageFlags.Ephemeral });
+    return;
+  }
   if (betAmount < minBet) {
     await interaction.reply({ content: `Minimum bet is ${formatBolts(minBet)}.` });
     return;

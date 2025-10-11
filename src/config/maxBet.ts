@@ -38,3 +38,14 @@ export function setMaxBetValue(db: Database.Database, v: bigint): void {
   ).run(v.toString());
 }
 
+// Uniform guard for ALL games
+export function assertWithinMaxBet(db: Database.Database, bet: bigint) {
+  const max = getMaxBet(db);
+  if (max.disabled) return; // unlimited
+  if (bet > max.limit) {
+    const msg = `Maximum bet is ${max.limit.toString()}.`;
+    const err = new Error(msg) as Error & { code?: string };
+    err.code = 'ERR_MAX_BET';
+    throw err;
+  }
+}

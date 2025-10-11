@@ -18,7 +18,7 @@ import { withUserLuck } from '../../rng/luck.js';
 import { onGambleXP } from '../../rank/xpEngine.js';
 import { rememberUserChannel } from '../../rank/announce.js';
 import { getSetting } from '../../db/kv.js';
-import { getMaxBet } from '../../config/maxBet.js';
+import { assertWithinMaxBet } from '../../config/maxBet.js';
 import { toBigInt } from '../../utils/bigint.js';
 
 export const data = new SlashCommandBuilder()
@@ -85,19 +85,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
   } catch { }
 
-  // Global max_bet gate
-  const max = getMaxBet(db);
-  const betBig = toBigInt(betAmount);
-  if (!max.disabled && betBig > max.limit) {
-    await interaction.reply({ content: `Bet exceeds max: ${betBig.toString()} > ${max.limit.toString()}. Use \`/config set key:max_bet value:<value|disable>\` to change.`, flags: MessageFlags.Ephemeral });
-    return;
+  // Centralized max bet guard
+  try { assertWithinMaxBet(db, toBigInt(betAmount)); } catch (e: any) {
+    if (e?.code === 'ERR_MAX_BET') { try { console.debug({ msg: 'bet_blocked', code: 'ERR_MAX_BET', guildId: interaction.guildId, userId, bet: String(betAmount) }); } catch {}
+      await interaction.reply({ content: e.message }); return; }
+    throw e;
   }
   if (betAmount < minBet) {
     await interaction.reply({ content: `Minimum bet is ${formatBolts(minBet)}.` });
-    return;
-  }
-  if (betAmount > maxBet) {
-    await interaction.reply({ content: `Maximum bet is ${formatBolts(maxBet)}.` });
     return;
   }
   const bal = getBalance(interaction.guildId!, userId);

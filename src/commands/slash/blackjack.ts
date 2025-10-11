@@ -20,6 +20,7 @@ import { dealInitial, hit as bjHit, stand as bjStand, doubleDown as bjDouble, ha
 import type { Card, BJState } from '../../games/blackjack/types.js';
 import { requireAdmin } from '../../admin/guard.js';
 import { blackjackLimits, validateBet, safeDefer, safeEdit, replyError } from '../../game/config.js';
+import { assertWithinMaxBet } from '../../config/maxBet.js';
 import { safeReply } from '../../interactions/reply.js';
 import { withLock } from '../../util/locks.js';
 import { findActiveSession, createSession, updateSession, settleSession, abortSession, endSession } from '../../game/blackjack/sessionStore.js';
@@ -215,8 +216,9 @@ export async function execute(i: ChatInputCommandInteraction) {
   if (sub === 'start') {
     const bet = i.options.getInteger('bet', true);
     const limits = blackjackLimits(db);
-    const v = validateBet(bet, limits);
-    if (!v.ok) { await i.reply({ content: v.reason }); return; }
+    // Only enforce min here; max is handled centrally by assertWithinMaxBet
+    if (bet < limits.minBet) { await i.reply({ content: `Minimum bet is ${formatBolts(limits.minBet)}.` }); return; }
+    try { assertWithinMaxBet(db, toBigInt(bet)); } catch (e: any) { if (e?.code === 'ERR_MAX_BET') { try { console.debug({ msg: 'bet_blocked', code: 'ERR_MAX_BET', guildId, userId, bet: String(bet) }); } catch {} await i.reply({ content: e.message }); return; } throw e; }
     const bal = getBalance(guildId, userId);
     if (bal < BigInt(bet)) {
       const db = getGuildDb(guildId);
@@ -509,10 +511,13 @@ export async function handleAgainButton(i: ButtonInteraction) {
     if (findActiveSession(db, i.guildId!, i.user.id)) return;
     // Validate funds and limits
     const limits = blackjackLimits(db);
-    const v = validateBet(bet, limits);
-    if (!v.ok) {
-      await i.followUp({ content: v.reason, flags: MessageFlags.Ephemeral }).catch(() => {});
+    if (bet < limits.minBet) {
+      await i.followUp({ content: `Minimum bet is ${formatBolts(limits.minBet)}.`, flags: MessageFlags.Ephemeral }).catch(() => {});
       return;
+    }
+    try { assertWithinMaxBet(db, toBigInt(bet)); } catch (e: any) {
+      if (e?.code === 'ERR_MAX_BET') { try { console.debug({ msg: 'bet_blocked', code: 'ERR_MAX_BET', guildId: i.guildId, userId: i.user.id, bet: String(bet) }); } catch {} await i.followUp({ content: e.message, flags: MessageFlags.Ephemeral }).catch(() => {}); return; }
+      throw e;
     }
     const bal = getBalance(i.guildId!, i.user.id);
     if (bal < BigInt(bet)) {

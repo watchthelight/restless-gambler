@@ -14,7 +14,7 @@ import { withUserLuck } from '../../rng/luck.js';
 import { onGambleXP } from '../../rank/xpEngine.js';
 import { rememberUserChannel } from '../../rank/announce.js';
 import { getSetting } from '../../db/kv.js';
-import { getMaxBet } from '../../config/maxBet.js';
+import { assertWithinMaxBet } from '../../config/maxBet.js';
 import { toBigInt } from '../../utils/bigint.js';
 
 export const data = new SlashCommandBuilder()
@@ -33,12 +33,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const bet = interaction.options.getInteger('bet', true);
   const userId = interaction.user.id;
   const bal = getBalance(interaction.guildId, userId);
-  // Global max_bet gate
-  const maxCfg = getMaxBet(getGuildDb(interaction.guildId));
-  const betBig = toBigInt(bet);
-  if (!maxCfg.disabled && betBig > maxCfg.limit) {
-    await interaction.reply({ content: `Bet exceeds max: ${betBig.toString()} > ${maxCfg.limit.toString()}. Use \`/config set key:max_bet value:<value|disable>\` to change.`, flags: MessageFlags.Ephemeral });
-    return;
+  // Centralized max bet guard
+  try { assertWithinMaxBet(getGuildDb(interaction.guildId), toBigInt(bet)); } catch (e: any) {
+    if (e?.code === 'ERR_MAX_BET') { await interaction.reply({ content: e.message, flags: MessageFlags.Ephemeral }); return; }
+    throw e;
   }
   if (bal < BigInt(bet)) {
     const db = getGuildDb(interaction.guildId);

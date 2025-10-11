@@ -1,4 +1,5 @@
 import { getGuildDb } from '../db/connection.js';
+import { isTestEnv } from '../util/env.js';
 import { userLocks } from '../util/locks.js';
 import { adjustBalance } from '../economy/wallet.js';
 import { accrueInterest, pay as payCalc, status as statusCalc } from './calculator.js';
@@ -55,7 +56,7 @@ export function createLoan(guildId: string, userId: string, principal: number, a
   db.prepare('INSERT INTO loans(id,user_id,principal,apr_bps,term_days,start_ts,due_ts,accrued_interest,paid_principal,paid_interest,status,last_accrual_ts,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .run(id, userId, principal, aprBps, termDays, start, due, 0, 0, 0, 'active', start, created);
   const loan = getLoanById(guildId, id)!;
-  console.log(JSON.stringify({ msg: 'loan_created', loanId: id, userId, principal }));
+  if (!isTestEnv()) console.log(JSON.stringify({ msg: 'loan_created', loanId: id, userId, principal }));
   return loan;
 }
 
@@ -75,7 +76,7 @@ export function accrueOnTouch(guildId: string, loan: Loan, now: number = Date.no
   if (interestDelta > 0n || Object.keys(updates).length) {
     const merged: Loan = { ...loan, ...updates } as Loan;
     updateLoan(guildId, merged);
-    console.log(JSON.stringify({ msg: 'loan_accrued', loanId: loan.id, interestDelta: Number(interestDelta) }));
+    if (!isTestEnv()) console.log(JSON.stringify({ msg: 'loan_accrued', loanId: loan.id, interestDelta: Number(interestDelta) }));
     return merged;
   }
   return loan;
@@ -94,8 +95,8 @@ export function applyPayment(guildId: string, loan: Loan, amount: number): { loa
   const st = statusCalc(next);
   next.status = st;
   updateLoan(guildId, next);
-  console.log(JSON.stringify({ msg: 'loan_payment', loanId: loan.id, paidInterest: Number(split.paidInterest), paidPrincipal: Number(split.paidPrincipal), remaining: Number(split.remaining) }));
-  if (st !== loan.status) console.log(JSON.stringify({ msg: 'loan_status', loanId: loan.id, status: st }));
+  if (!isTestEnv()) console.log(JSON.stringify({ msg: 'loan_payment', loanId: loan.id, paidInterest: Number(split.paidInterest), paidPrincipal: Number(split.paidPrincipal), remaining: Number(split.remaining) }));
+  if (!isTestEnv() && st !== loan.status) console.log(JSON.stringify({ msg: 'loan_status', loanId: loan.id, status: st }));
   return { loan: next, ...split };
 }
 
@@ -106,7 +107,7 @@ export function forgiveAll(guildId: string, userId: string): number {
   for (const r of rows) {
     db.prepare("UPDATE loans SET status='forgiven', accrued_interest=0, paid_interest=0, paid_principal=principal, last_accrual_ts=?, due_ts=? WHERE id = ?")
       .run(now, now, r.id);
-    console.log(JSON.stringify({ msg: 'loan_status', loanId: r.id, status: 'forgiven' }));
+    if (!isTestEnv()) console.log(JSON.stringify({ msg: 'loan_status', loanId: r.id, status: 'forgiven' }));
   }
   return rows.length;
 }
@@ -132,7 +133,7 @@ export function kickoffStartupAccrualSweep(): void {
           if (interestDelta > 0n || Object.keys(updates).length) {
             db.prepare('UPDATE loans SET accrued_interest=?, last_accrual_ts=?, status=? WHERE id=?')
               .run(Number(loan.accrued_interest + interestDelta), updates.last_accrual_ts ?? now, updates.status ?? loan.status, loan.id);
-            console.log(JSON.stringify({ msg: 'loan_accrued', loanId: loan.id, interestDelta: Number(interestDelta) }));
+            if (!isTestEnv()) console.log(JSON.stringify({ msg: 'loan_accrued', loanId: loan.id, interestDelta: Number(interestDelta) }));
           }
         }
       }

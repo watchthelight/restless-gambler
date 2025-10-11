@@ -8,7 +8,7 @@ describe('holdem join/leave', () => {
     const uid = 'u_test_1';
     await adjustBalance(guildId, uid, 10_000, 'seed');
     const t = createTableInChannel(guildId, 'chanA', { small_blind: 5, big_blind: 10 });
-    const buyin = t.min_buyin; // default 20*bb
+    const buyin = typeof t.min_buyin === 'bigint' ? Number(t.min_buyin) : t.min_buyin; // default 20*bb
     const before = getBalance(guildId, uid);
     const { seat, stack } = await joinTable(guildId, t.id, uid, buyin);
     expect(seat).toBe(1);
@@ -16,6 +16,7 @@ describe('holdem join/leave', () => {
     const after = getBalance(guildId, uid);
     expect(after).toBe(before - BigInt(buyin));
     const left = await leaveAnyTable(guildId, uid);
-    expect(left?.stack).toBe(buyin);
+    // stack may be bigint from db.defaultSafeIntegers
+    expect(left?.stack).toBe(typeof t.min_buyin === 'bigint' ? t.min_buyin : buyin);
   });
 });

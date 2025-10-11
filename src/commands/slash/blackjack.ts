@@ -18,11 +18,18 @@ import { renderAmountInline } from '../../util/amountRender.js';
 import { renderHands, handValueBJ } from '../../ui/cardsDisplay.js';
 import { dealInitial, hit as bjHit, stand as bjStand, doubleDown as bjDouble, handTotal, isBlackjack, settle } from '../../games/blackjack/engine.js';
 import type { Card, BJState } from '../../games/blackjack/types.js';
-import { requireAdmin } from '../../admin/roles.js';
+import { requireAdmin } from '../../admin/guard.js';
 import { blackjackLimits, validateBet, safeDefer, safeEdit, replyError } from '../../game/config.js';
 import { safeReply } from '../../interactions/reply.js';
 import { withLock } from '../../util/locks.js';
 import { findActiveSession, createSession, updateSession, settleSession, abortSession, endSession } from '../../game/blackjack/sessionStore.js';
+import { ensureGuildInteraction } from '../../interactions/guards.js';
+import { withUserLuck } from '../../rng/luck.js';
+import { onGambleXP } from '../../rank/xpEngine.js';
+import { rememberUserChannel } from '../../rank/announce.js';
+import { getSetting } from '../../db/kv.js';
+import { dbToBigint, bigintToDb, toBigInt } from '../../utils/bigint.js';
+import type { RNG } from '../../util/rng.js';
 
 type SessionRow = {
   id: number;
@@ -159,6 +166,11 @@ function ensureTimeout(guildId: string, channelId: string, userId: string, clien
       // Credit payout (initial bet already debited)
       if (result.payout > 0) await adjustBalance(guildId, userId, result.payout, 'blackjack:win');
       endSession(guildId, userId);
+      try {
+        const ranksEnabled = (getSetting(db, 'features.ranks.enabled') !== 'false');
+        const balAfter = getBalance(guildId, userId);
+        if (ranksEnabled) onGambleXP(guildId, userId, state.bet, Number(balAfter));
+      } catch {}
       // Try to edit original message to disable buttons
       const messageId = (state as any).messageId;
       if (messageId) {
@@ -193,19 +205,20 @@ function ensureTimeout(guildId: string, channelId: string, userId: string, clien
 }
 
 export async function execute(i: ChatInputCommandInteraction) {
-  if (!i.guildId) { await i.reply({ content: 'This bot only works in servers.' }); return; }
+  if (!await ensureGuildInteraction(i)) return;
   const sub = i.options.getSubcommand(true);
-  const guildId = i.guildId;
+  const guildId = i.guildId!;
   const channelId = i.channelId;
   const userId = i.user.id;
   const db = getGuildDb(guildId);
+  try { rememberUserChannel(guildId, userId, channelId); } catch {}
   if (sub === 'start') {
     const bet = i.options.getInteger('bet', true);
     const limits = blackjackLimits(db);
     const v = validateBet(bet, limits);
     if (!v.ok) { await i.reply({ content: v.reason }); return; }
     const bal = getBalance(guildId, userId);
-    if (bal < bet) {
+    if (bal < BigInt(bet)) {
       const db = getGuildDb(guildId);
       const mode = uiExactMode(db, "guild");
       const sig = uiSigFigs(db);
@@ -222,7 +235,9 @@ export async function execute(i: ChatInputCommandInteraction) {
     }
     // Reserve bet and deal
     await adjustBalance(guildId, userId, -bet, 'blackjack:bet');
-    const state = dealInitial(bet);
+    const ranksEnabled = (getSetting(db, 'features.ranks.enabled') !== 'false');
+    const rng: RNG = (max: number) => Math.floor(((ranksEnabled ? withUserLuck(guildId, userId, () => Math.random()) : Math.random())) * max);
+    const state = dealInitial(bet, rng);
     (state as any).channelId = channelId;
     saveSession(guildId, userId, state);
     const m = await renderAndReply(i, state, { revealDealer: false, disableDouble: false, finished: state.finished });
@@ -265,6 +280,7 @@ export async function execute(i: ChatInputCommandInteraction) {
           if (handRender.kind === 'image') payload.files = [handRender.attachment];
           return payload;
         })()) : await renderAndReply(i, state, { revealDealer: true, headline, finished: true, disableDouble: true });
+        try { if ((getSetting(getGuildDb(guildId), 'features.ranks.enabled') !== 'false')) onGambleXP(guildId, userId, bet, Number(balNow)); } catch {}
       });
     }
     console.info(JSON.stringify({ msg: 'blackjack', action: 'start', guild_id: guildId, channel_id: channelId, user_id: userId, bet }));
@@ -309,6 +325,7 @@ export async function execute(i: ChatInputCommandInteraction) {
           const payload: any = { embeds: [embed], components: [row, again] };
           if (handRender.kind === 'image') payload.files = [handRender.attachment];
           await (i as any).editReply ? (i as any).editReply(payload) : (i as any).reply(payload);
+          try { onGambleXP(guildId, userId, state.bet, Number(balNow)); } catch {}
         });
       } else {
         await renderAndReply(i, state, { revealDealer: false, disableDouble: true, finished, headline });
@@ -346,6 +363,7 @@ export async function execute(i: ChatInputCommandInteraction) {
         const payload: any = { embeds: [embed], components: [row, again] };
         if (handRender.kind === 'image') payload.files = [handRender.attachment];
         await (i as any).editReply ? (i as any).editReply(payload) : (i as any).reply(payload);
+        try { onGambleXP(guildId, userId, state.bet, Number(balNow)); } catch {}
       });
     } else if (sub === 'double') {
       // Must have funds to double
@@ -393,6 +411,7 @@ export async function execute(i: ChatInputCommandInteraction) {
     }
     console.info(JSON.stringify({ msg: 'blackjack', action: sub, guild_id: guildId, channel_id: channelId, user_id: userId }));
   } else if (sub === 'cancel') {
+    await requireAdmin(i);
     // New robust cancel flow with sessionStore usage and structured logs
     const db = getGuildDb(guildId);
     const tryOnce = () => {
@@ -410,15 +429,15 @@ export async function execute(i: ChatInputCommandInteraction) {
         try { abortSession(db, session.id); } catch {}
         try { endSession(guildId, userId); } catch {}
         // Refund inside same txn to keep atomic with cancel
-        const row = db.prepare('SELECT balance FROM balances WHERE user_id = ?').get(userId) as { balance?: number } | undefined;
-        const cur = row?.balance ?? 0;
-        const next = cur + bet;
+        const row = db.prepare('SELECT balance FROM balances WHERE user_id = ?').get(userId) as { balance?: number | string | bigint } | undefined;
+        const cur = row?.balance != null ? dbToBigint(row.balance) : 0n;
+        const next = cur + toBigInt(bet);
         db.prepare('INSERT INTO balances(user_id, balance, updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET balance = excluded.balance, updated_at = excluded.updated_at').run(
           userId,
-          next,
+          bigintToDb(next),
           Date.now(),
         );
-        db.prepare('INSERT INTO transactions(user_id, delta, reason, created_at) VALUES (?,?,?,?)').run(userId, bet, 'blackjack:cancel', Date.now());
+        db.prepare('INSERT INTO transactions(user_id, delta, reason, created_at) VALUES (?,?,?,?)').run(userId, Number(bet), 'blackjack:cancel', Date.now());
         // Respond
         const msg = `Blackjack canceled. Your bet has been returned.`;
         if (!(i as any).replied && !(i as any).deferred) (i as any).reply({ content: msg, flags: MessageFlags.Ephemeral });
@@ -444,11 +463,11 @@ export async function execute(i: ChatInputCommandInteraction) {
           const err2 = `${ee?.name || 'Error'}: ${ee?.message || String(ee)}`;
           const stack2 = (ee?.stack || '').split('\n')[0] || '';
           console.error(JSON.stringify({ msg: 'handler_error', name: 'blackjack', sub: 'cancel', guildId, userId, error: err2, stack: stack2 }));
-          if (!(i as any).replied && !(i as any).deferred) await (i as any).reply({ content: 'Blackjack is updating its data. Try again in a moment.', flags: MessageFlags.Ephemeral });
+          if (!(i as any).replied && !(i as any).deferred) await (i as any).reply({ content: 'Blackjack is updating its data. Try again in a moment.', allowedMentions: { parse: [] } });
           return;
         }
       }
-      if (!(i as any).replied && !(i as any).deferred) await (i as any).reply({ content: 'Something went wrong processing your request.', flags: MessageFlags.Ephemeral });
+      if (!(i as any).replied && !(i as any).deferred) await (i as any).reply({ content: 'Something went wrong processing your request.', allowedMentions: { parse: [] } });
     }
   }
 }
@@ -456,8 +475,8 @@ export async function execute(i: ChatInputCommandInteraction) {
 export async function handleButton(i: ButtonInteraction) {
   const [prefix, action, g, c, u] = i.customId.split(':');
   if (prefix !== 'blackjack') return;
-  if (!i.guildId || i.guildId !== g) { await safeReply(i, { content: 'This bot only works in servers.', flags: MessageFlags.Ephemeral }); return; }
-  if (i.user.id !== u) { await safeReply(i, { content: `Only <@${u}> can act on this hand.`, flags: MessageFlags.Ephemeral }); return; }
+  if (!i.guildId || i.guildId !== g) { await safeReply(i, { content: 'This bot only works in servers.' }); return; }
+  if (i.user.id !== u) { await safeReply(i, { content: `Only <@${u}> can act on this hand.` }); return; }
   // Map buttons to slash actions
   (i as any).options = { getSubcommand: () => action } as any;
   await withLock(`bj:${i.message?.id || i.id}`, async () => {
@@ -479,7 +498,7 @@ export async function handleAgainButton(i: ButtonInteraction) {
   if (prefix !== 'bj' || action !== 'again') return;
   if (!i.guildId || i.guildId !== g) return;
   if (i.user.id !== u) {
-    await safeReply(i, { content: 'Only the original player can start a new hand from this card.', flags: MessageFlags.Ephemeral });
+    await safeReply(i, { content: 'Only the original player can start a new hand from this card.' });
     return;
   }
   const bet = Number(betStr);
@@ -496,13 +515,15 @@ export async function handleAgainButton(i: ButtonInteraction) {
       return;
     }
     const bal = getBalance(i.guildId!, i.user.id);
-    if (bal < bet) {
+    if (bal < BigInt(bet)) {
       await i.followUp({ content: 'Not enough funds for that bet.', flags: MessageFlags.Ephemeral }).catch(() => {});
       return;
     }
     // Reserve and deal
     await adjustBalance(i.guildId!, i.user.id, -bet, 'blackjack:bet');
-    const state = dealInitial(bet);
+    const ranksEnabled = (getSetting(getGuildDb(i.guildId!), 'features.ranks.enabled') !== 'false');
+    const rng: RNG = (max: number) => Math.floor(((ranksEnabled ? withUserLuck(i.guildId!, i.user.id, () => Math.random()) : Math.random())) * max);
+    const state = dealInitial(bet, rng);
     (state as any).channelId = i.channelId;
     saveSession(i.guildId!, i.user.id, state);
     // Render initial hand as a NEW message

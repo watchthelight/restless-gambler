@@ -1,108 +1,114 @@
-import type Database from "better-sqlite3";
+import type Database from 'better-sqlite3';
 import { MessageFlags } from 'discord.js';
 
 function getKV(db: Database.Database, key: string): string | null {
-    const r = db.prepare("SELECT value FROM guild_settings WHERE key = ?").get(key) as { value: string } | undefined;
-    return r ? String(r.value) : null;
+  const r = db.prepare('SELECT value FROM guild_settings WHERE key = ?').get(key) as { value: string } | undefined;
+  return r ? String(r.value) : null;
 }
 
 export function setKV(db: Database.Database, key: string, value: string) {
-    db.prepare("INSERT INTO guild_settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, value);
+  db.prepare('INSERT INTO guild_settings(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, value);
 }
 
 function num(v: any, d: number): number {
-    if (v === null || v === undefined) return d;
-    if (typeof v === "string" && v.trim() === "") return d;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : d;
+  if (v === null || v === undefined) return d;
+  if (typeof v === 'string' && v.trim() === '') return d;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
 }
 
 // Optional legacy table reader for a given game
 function readLegacy(db: Database.Database, table: string, cols: string[]) {
-    try {
-        const has = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
-        if (!has) return null;
-        const row = db.prepare(`SELECT ${cols.join(",")} FROM ${table} LIMIT 1`).get() as { min_bet?: number; max_bet?: number; timeout_s?: number } | undefined;
-        return row || null;
-    } catch { return null; }
+  try {
+    const has = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
+    if (!has) return null;
+    const row = db
+      .prepare(`SELECT ${cols.join(',')} FROM ${table} LIMIT 1`)
+      .get() as { min_bet?: number; max_bet?: number; timeout_s?: number } | undefined;
+    return row || null;
+  } catch {
+    return null;
+  }
 }
 
 export function blackjackLimits(db: Database.Database) {
-    // KV first
-    let minBet = num(getKV(db, "blackjack.min_bet"), 10);
-    let maxBet = num(getKV(db, "blackjack.max_bet"), 1000);
-    let timeout = num(getKV(db, "blackjack.timeout_s"), 2);
-    // Fallback if KV unset and legacy exists
-    const legacy = readLegacy(db, "blackjack_config", ["min_bet", "max_bet", "timeout_s"]);
-    if (legacy) {
-        if (!Number.isFinite(minBet)) minBet = num(legacy.min_bet, 10);
-        if (!Number.isFinite(maxBet)) maxBet = num(legacy.max_bet, 1000);
-        if (!Number.isFinite(timeout)) timeout = num(legacy.timeout_s, 2);
-    }
-    // Sanity clamps
-    minBet = Math.max(0, Math.floor(minBet));
-    maxBet = Math.max(0, Math.floor(maxBet));
-    if (maxBet === 0) maxBet = 1000;        // never allow a zero ceiling
-    if (minBet === 0) minBet = 10;
-    if (minBet > maxBet) [minBet, maxBet] = [10, 1000];
-    return { minBet, maxBet, timeout };
+  // KV first
+  let minBet = num(getKV(db, 'blackjack.min_bet'), 10);
+  let maxBet = num(getKV(db, 'blackjack.max_bet'), 1000);
+  let timeout = num(getKV(db, 'blackjack.timeout_s'), 2);
+  // Fallback if KV unset and legacy exists
+  const legacy = readLegacy(db, 'blackjack_config', ['min_bet', 'max_bet', 'timeout_s']);
+  if (legacy) {
+    if (!Number.isFinite(minBet)) minBet = num(legacy.min_bet, 10);
+    if (!Number.isFinite(maxBet)) maxBet = num(legacy.max_bet, 1000);
+    if (!Number.isFinite(timeout)) timeout = num(legacy.timeout_s, 2);
+  }
+  // Sanity clamps
+  minBet = Math.max(0, Math.floor(minBet));
+  maxBet = Math.max(0, Math.floor(maxBet));
+  if (maxBet === 0) maxBet = 1000; // never allow a zero ceiling
+  if (minBet === 0) minBet = 10;
+  if (minBet > maxBet) [minBet, maxBet] = [10, 1000];
+  return { minBet, maxBet, timeout };
 }
 
 export function slotsLimits(db: Database.Database) {
-    let minBet = num(getKV(db, "slots.min_bet"), 10);
-    let maxBet = num(getKV(db, "slots.max_bet"), 1000);
-    // clamp and sanity
-    minBet = Math.max(0, Math.floor(minBet || 10));
-    maxBet = Math.max(0, Math.floor(maxBet || 1000));
-    if (minBet > maxBet) [minBet, maxBet] = [10, 1000];
-    return { minBet, maxBet };
+  let minBet = num(getKV(db, 'slots.min_bet'), 10);
+  let maxBet = num(getKV(db, 'slots.max_bet'), 1000);
+  // clamp and sanity
+  minBet = Math.max(0, Math.floor(minBet || 10));
+  maxBet = Math.max(0, Math.floor(maxBet || 1000));
+  if (minBet > maxBet) [minBet, maxBet] = [10, 1000];
+  return { minBet, maxBet };
 }
 
 export function validateBet(bet: number, limits: { minBet: number; maxBet: number }) {
-    if (bet < limits.minBet) return { ok: false, reason: `Minimum bet is ${limits.minBet}.` };
-    if (bet > limits.maxBet) return { ok: false, reason: `Maximum bet is ${limits.maxBet}.` };
-    return { ok: true as const };
+  if (bet < limits.minBet) return { ok: false as const, reason: `Minimum bet is ${limits.minBet}.` };
+  if (bet > limits.maxBet) return { ok: false as const, reason: `Maximum bet is ${limits.maxBet}.` };
+  return { ok: true as const };
 }
 
 // Common safe-ack helpers for interactions
 export async function safeDefer(interaction: any, ephemeral = true) {
-    try {
-        if (interaction.isButton?.() || interaction.isStringSelectMenu?.() || interaction.isAnySelectMenu?.()) {
-            if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate();
-        } else {
-            const flags = ephemeral ? (MessageFlags as any)?.Ephemeral : undefined;
-            if (!interaction.deferred && !interaction.replied) await interaction.deferReply(flags !== undefined ? { flags } : {} as any);
-        }
-    } catch { }
+  try {
+    if (interaction.isButton?.() || interaction.isStringSelectMenu?.() || interaction.isAnySelectMenu?.()) {
+      if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate();
+    } else {
+      const flags = ephemeral ? (MessageFlags as any)?.Ephemeral : undefined;
+      // Avoid locking visibility to ephemeral for generic defers: prefer public when possible
+      if (!interaction.deferred && !interaction.replied) await interaction.deferReply(ephemeral ? ({ flags } as any) : ({} as any));
+    }
+  } catch {}
 }
 
 export async function safeEdit(interaction: any, opts: any) {
-    try {
-        const flags = (opts as any).flags ?? ((opts as any).ephemeral ? (MessageFlags as any)?.Ephemeral : undefined);
-        const p = flags !== undefined ? { ...opts, flags } : opts;
-        if (interaction.isButton?.() || interaction.isStringSelectMenu?.() || interaction.isAnySelectMenu?.()) {
-            return interaction.editReply?.(p) ?? interaction.update?.(p);
-        }
-        if (interaction.deferred) return interaction.editReply?.(p);
-        return interaction.reply?.(p);
-    } catch { }
+  try {
+    const flags = (opts as any).flags ?? ((opts as any).ephemeral ? (MessageFlags as any)?.Ephemeral : undefined);
+    const p = flags !== undefined ? { ...opts, flags } : opts;
+    if (interaction.isButton?.() || interaction.isStringSelectMenu?.() || interaction.isAnySelectMenu?.()) {
+      return interaction.editReply?.(p) ?? interaction.update?.(p);
+    }
+    if (interaction.deferred) return interaction.editReply?.(p);
+    return interaction.reply?.(p);
+  } catch {}
 }
 
 export async function replyError(interaction: any, code: string, log: any, extra?: any) {
-    log?.error?.({ msg: "interaction_error", code, ...extra });
-    try {
-        const p = { content: `❗ ${code}`, flags: (MessageFlags as any)?.Ephemeral } as any;
-        if (interaction.deferred || interaction.replied) await interaction.editReply?.(p);
-        else await interaction.reply?.(p);
-    } catch { }
+  log?.error?.({ msg: 'interaction_error', code, ...extra });
+  try {
+    const p = { content: `ERR ${code}`, allowedMentions: { parse: [] as const } } as any;
+    if (interaction.deferred || interaction.replied) await interaction.editReply?.({ content: p.content });
+    else await interaction.reply?.(p);
+  } catch {}
 }
 
-export function uiExactMode(db: Database.Database, scope: "guild" | "user", userId?: string): "off" | "inline" | "on_click" {
-    // guild key: ui.show_exact_mode ; user key (optional): ui.show_exact_mode.user.<id>
-    const key = scope === "user" && userId ? `ui.show_exact_mode.user.${userId}` : "ui.show_exact_mode";
-    return (getKV(db, key) ?? "on_click") as any;
+export function uiExactMode(db: Database.Database, scope: 'guild' | 'user', userId?: string): 'off' | 'inline' | 'on_click' {
+  // guild key: ui.show_exact_mode ; user key (optional): ui.show_exact_mode.user.<id>
+  const key = scope === 'user' && userId ? `ui.show_exact_mode.user.${userId}` : 'ui.show_exact_mode';
+  return (getKV(db, key) ?? 'on_click') as any;
 }
+
 export function uiSigFigs(db: Database.Database): number {
-    const n = Number(getKV(db, "ui.compact_sigfigs") ?? 3);
-    return Math.min(5, Math.max(3, Number.isFinite(n) ? n : 3));
+  const n = Number(getKV(db, 'ui.compact_sigfigs') ?? 3);
+  return Math.min(5, Math.max(3, Number.isFinite(n) ? n : 3));
 }

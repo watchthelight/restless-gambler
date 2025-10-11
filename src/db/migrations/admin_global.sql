@@ -1,6 +1,10 @@
 CREATE TABLE IF NOT EXISTS super_admins(
   user_id TEXT PRIMARY KEY,
-  created_at INTEGER NOT NULL
+  added_at INTEGER DEFAULT (strftime('%s','now'))
+);
+CREATE TABLE IF NOT EXISTS admin_users(
+  user_id TEXT PRIMARY KEY,
+  added_at INTEGER DEFAULT (strftime('%s','now'))
 );
 -- Keep audit log in global DB (optional but useful)
 CREATE TABLE IF NOT EXISTS admin_audit(

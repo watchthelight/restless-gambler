@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ActivityType, Client } from "discord.js";
+import { getActiveBuffCount } from "../rank/store.js";
 import { allCommandBuilders } from "../registry/util-builders.js";
 
 // Extend this list when new game commands are added.
@@ -56,15 +57,19 @@ export function countLinesOfCode(rootDir = path.resolve(process.cwd(), "src")): 
     return total;
 }
 
-export function makeStatusLine(): string {
+function makeStatusLineWithBuffs(client: Client): string {
     const games = countGames();
     const commands = countCommands();
     const loc = countLinesOfCode();
-    return `${games} games, ${commands} commands, across ${loc.toLocaleString()} lines of code`;
+    let buffs = 0;
+    try {
+        for (const [gid] of client.guilds.cache) buffs += getActiveBuffCount(gid);
+    } catch { }
+    return `${games} games, ${commands} commands, across ${loc.toLocaleString()} lines of code • ${buffs} buffs active`;
 }
 
 export async function updateBotPresence(client: Client, log = console) {
-    const line = makeStatusLine();
+    const line = makeStatusLineWithBuffs(client);
     try {
         client.user?.setPresence({
             activities: [{ name: line, type: ActivityType.Playing }],

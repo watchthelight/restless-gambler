@@ -13,6 +13,10 @@ import { resolveRuntime } from './config/runtime.js';
 import { updateBotPresence } from "./metrics/project.js";
 import { loadConfig, startTogglesWatcher } from './config/toggles.js';
 import { startLoanReminderLoop } from "./loans/reminders.js";
+import { setClient } from './bot/client.js';
+import { startRankSchedulers } from './bootstrap/scheduler.js';
+import path from 'node:path';
+import { ensureAdminGlobalDb } from './db/adminGlobal.js';
 
 // Suppress console output temporarily while loading dotenv (to hide emoji tips)
 const originalLog = console.log;
@@ -62,6 +66,7 @@ async function main() {
   try { startTogglesWatcher(); } catch {}
 
   const client = createClient();
+  setClient(client);
   try {
     const anyClient: any = client as any;
     if (VERBOSE && anyClient?.rest?.on) {
@@ -107,6 +112,9 @@ async function main() {
     try {
       startLoanReminderLoop(client, log);
     } catch { }
+
+    // Start hourly rank schedulers (buff cleanup)
+    try { startRankSchedulers(client); } catch { }
   });
   let shuttingDown = false;
 
@@ -137,6 +145,11 @@ async function main() {
   }
 
   await ui.timed('Opening databases', async () => {
+    // Ensure global admin DB exists early
+    try {
+      const dataDir = path.resolve('data');
+      ensureAdminGlobalDb(path.join(dataDir, 'admin_global.db'));
+    } catch { }
     ensureSchema();
     try {
       if (process.env.DEV_GUILD_ID) {

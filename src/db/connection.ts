@@ -3,7 +3,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { VERBOSE, vlog } from "../util/verbose.js";
 import { migrateGuildDb } from "./migrateGuild.js";
-import { ensureSuperAdminsSchema, superAdminInsertSQL } from "./adminSchema.js";
+import { ensureSuperAdminsSchema, superAdminInsertSQL, ensureAdminSchema } from "./adminSchema.js";
 import { ensureBlackjackSessionsSchema } from "../game/blackjack/sessionStore.js";
 
 // New per-guild DB manager. Keeps backward exports minimally for legacy callers.
@@ -30,6 +30,7 @@ function openDb(filePath: string): Database.Database {
   ensureDirExists(path.dirname(filePath));
   const db = new Database(filePath, { fileMustExist: false });
   db.pragma("journal_mode = WAL");
+  db.defaultSafeIntegers(true); // Enable BigInt for INTEGER columns
   // Lightweight SQL tracing
   if (VERBOSE && (Database as any)?.prototype?.prepare && !(db as any).__tracePatched) {
     (db as any).__tracePatched = true;
@@ -122,6 +123,11 @@ export function getGuildDb(guildId: string): Database.Database {
     WHERE NOT EXISTS (SELECT 1 FROM guild_settings WHERE key='faucet_limit');
   `);
   ensureCompatViews(db);
+  // Ensure admin schema/view and attach global admin DB as 'admin'
+  try {
+    const adminDbPath = getCfg().adminGlobal;
+    ensureAdminSchema(db, { adminDbPath, guildId, dbFilePath: file });
+  } catch { }
   if (VERBOSE) {
     try {
       console.info(JSON.stringify({ msg: "guild_db_open", guildId, path: file }));
@@ -163,7 +169,7 @@ export function getDbPaths() {
   const cfg = getCfg();
   return {
     data_dir: path.resolve(cfg.dataDir),
-    admin_global: path.resolve(cfg.adminGlobal),
+    admin_global: cfg.adminGlobal === ':memory:' ? ':memory:' : path.resolve(cfg.adminGlobal),
     legacy_data: path.resolve(cfg.legacyData),
   };
 }

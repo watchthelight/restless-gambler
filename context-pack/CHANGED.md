@@ -1,3 +1,10 @@
+2025-10-10 — Ranks & Luck (completed)
+- XP now awarded across all games; rank-ups grant +luck for 1h.
+- Public rank-up announcements added; status shows active buffs.
+- Hourly cleanup of expired buffs.
+- New help docs for /rank and /rank-admin.
+- Tests for XP flow, luck clamp, and commands.
+
 2025-10-10 — Hold'em seating MVP
 - Added per-guild tables and players (003_holdem_core.sql)
 - `/holdem create` now reports **Blinds**, **Buy-in (min–max)**, and **Seats**
@@ -265,3 +272,7 @@ Verified both roles can execute commands; others receive the standard dev-only m
 
 2025-10-10 — `/loan apply`
 - Added `/loan apply amount:<int> apr:<bps> term_days:<int>` which validates against user-specific offers, creates the loan, credits the wallet, and returns a confirmation card with quick-pay buttons.
+2025-10-10 — Hide admin commands from non-admins
+- Set default_member_permissions=ManageGuild and dm_permission=false on admin-only commands.
+- Non-admins no longer see admin commands in the slash picker.
+- Server admins can override visibility in Integrations → App Commands.

@@ -9,6 +9,7 @@ import logSymbols from 'log-symbols';
 import prettyMs from 'pretty-ms';
 import cliProgress from 'cli-progress';
 import { getPalette } from './theme.js';
+import { isTestEnv } from '../util/env.js';
 
 type Spinner = ReturnType<typeof ora> & {
   succeed: (text?: string) => Spinner;
@@ -52,6 +53,8 @@ function safeReadPkgVersion() {
 }
 
 function say(msg: string, style: 'info' | 'success' | 'warn' | 'error' | 'dim' | 'title' = 'info') {
+  // Keep Jest runs clean
+  if (isTestEnv()) return;
   if ((process.env.QUIET === '1' || process.argv.includes('--quiet')) && style !== 'dim') return;
   let out = msg;
   switch (style) {

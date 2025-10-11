@@ -19,18 +19,19 @@ import { walletEmbed } from '../shared/walletView.js';
 import { formatBolts } from '../../economy/currency.js';
 import { safeDefer } from '../../interactions/reply.js';
 import { getBalance, adjustBalance } from '../../economy/wallet.js';
-import { requireAdmin } from '../../admin/roles.js';
 import { buildChart } from '../../loans/chart.js';
 import { schedule, accrueInterest, status as statusCalc } from '../../loans/calculator.js';
-import { getScore, resetScore, bumpOnTime, penalizeLate } from '../../loans/credit.js';
-import { listUserLoans, getActiveLoans, createAndCredit, accrueOnTouch, applyPayment, forgiveAll, setUserPrefs, setReminderChannelId } from '../../loans/store.js';
-import { runOneGuildReminderSweep } from '../../loans/reminders.js';
+import { getScore, bumpOnTime, penalizeLate, resetScore } from '../../loans/credit.js';
+import { listUserLoans, getActiveLoans, createAndCredit, accrueOnTouch, applyPayment, setUserPrefs, forgiveAll } from '../../loans/store.js';
 import { Loan } from '../../loans/types.js';
+import { buildLoanDetailsCard } from '../../ui/cardFactory.js';
 import { underwrite } from '../../loans/underwrite.js';
 import { offersForAmount } from '../../loans/offers.js';
 import { markOnce } from '../../util/once.js';
 import { getReminderPref, setReminderPref } from '../../loans/prefs.js';
 import { replyOnce } from '../../interactions/replyOnce.js';
+import { getGuildDb } from '../../db/connection.js';
+import { ensureAdminAttached, isAdminUser } from '../../db/adminGlobal.js';
 
 export const data = new SlashCommandBuilder()
   .setName('loan')
@@ -42,7 +43,6 @@ export const data = new SlashCommandBuilder()
       .addIntegerOption((o) => o.setName('amount').setDescription('Requested amount in bolts').setRequired(true).setMinValue(50).setMaxValue(1_000_000)),
   )
   .addSubcommand((s) => s.setName('pay').setDescription('Make a payment').addIntegerOption(o => o.setName('amount').setDescription('Payment amount').setRequired(true).setMinValue(1)))
-  .addSubcommand((s) => s.setName('remind-all').setDescription('Admin: run a reminder sweep now'))
   .addSubcommandGroup((g) =>
     g
       .setName('reminders')
@@ -56,14 +56,22 @@ export const data = new SlashCommandBuilder()
         .setName('snooze')
         .setDescription('Snooze reminders')
         .addIntegerOption((o) => o.setName('hours').setDescription('Hours to snooze').setMinValue(1).setMaxValue(72).setRequired(true)))
-      .addSubcommand((sc) => sc
-        .setName('set-channel')
-        .setDescription('Admin: set reminder channel (or clear)')
-        .addChannelOption((o) => o.setName('channel').setDescription('Channel for reminders; omit to clear').setRequired(false)))
   )
   .addSubcommand((s) => s.setName('details').setDescription('Show your loan details'))
-  .addSubcommand((s) => s.setName('credit-reset').setDescription('Admin: reset a user\'s credit score').addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true)))
-  .addSubcommand((s) => s.setName('forgive').setDescription('Admin: forgive all loans and reset balance to 0').addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true)));
+  // Admin-only subcommands (hidden at runtime via permission check)
+  .addSubcommand((s) =>
+    s
+      .setName('credit-reset')
+      .setDescription('Admin only — use /loan-admin credit-reset')
+      .addUserOption((o) => o.setName('user').setDescription('User to reset').setRequired(true))
+  )
+  .addSubcommand((s) =>
+    s
+      .setName('forgive')
+      .setDescription('Admin only — use /loan-admin forgive')
+      .addUserOption((o) => o.setName('user').setDescription('User to forgive').setRequired(true))
+  )
+  ;
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   if (!interaction.guildId) { await interaction.reply({ content: 'This bot only works in servers.' }); return; }
@@ -82,7 +90,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       .setCustomId(`loan:offer:${userId}`)
       .setPlaceholder('Select loan amount')
       .addOptions(
-        ...offers.map(o => new StringSelectMenuOptionBuilder().setLabel(`${formatBolts(o.principal)} • ${(o.aprBps/100).toFixed(2)}% • ${o.termDays}d`).setValue(`${o.principal}:${o.aprBps}:${o.termDays}`))
+        ...offers.map(o => new StringSelectMenuOptionBuilder().setLabel(`${formatBolts(o.principal)} • ${(o.aprBps / 100).toFixed(2)}% • ${o.termDays}d`).setValue(`${o.principal}:${o.aprBps}:${o.termDays}`))
       );
     const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(sel);
     const theme = getGuildTheme(guildId);
@@ -118,52 +126,40 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  if (sub === 'remind-all') {
-    await requireAdmin(interaction);
-    await safeDefer(interaction, { ephemeral: true });
-    const count = await runOneGuildReminderSweep(interaction.client as any, guildId);
-    await interaction.editReply({ content: `Reminder sweep done. Notices sent: ${count}` });
-    return;
-  }
+  // Admin-only functions moved to /loan-admin
 
   if (sub === 'reminders') {
     const sub2 = interaction.options.getSubcommand();
     if (sub2 === 'status') {
       const on = getReminderPref(guildId, userId);
-      await interaction.reply({ content: `🔔 Loan reminders: ${on ? 'ON' : 'OFF'}`, flags: MessageFlags.Ephemeral }).catch(() => {});
+      await interaction.reply({ content: `🔔 Loan reminders: ${on ? 'ON' : 'OFF'}`, flags: MessageFlags.Ephemeral }).catch(() => { });
       return;
     }
     if (sub2 === 'on' || sub2 === 'opt-in') {
       setReminderPref(guildId, userId, true);
-      await interaction.reply({ content: '🔔 Loan reminders turned ON.', flags: MessageFlags.Ephemeral }).catch(() => {});
+      await interaction.reply({ content: '🔔 Loan reminders turned ON.', flags: MessageFlags.Ephemeral }).catch(() => { });
       return;
     }
     if (sub2 === 'off' || sub2 === 'opt-out') {
       setReminderPref(guildId, userId, false);
-      await interaction.reply({ content: '🔔 Loan reminders turned OFF.', flags: MessageFlags.Ephemeral }).catch(() => {});
+      await interaction.reply({ content: '🔔 Loan reminders turned OFF.', flags: MessageFlags.Ephemeral }).catch(() => { });
       return;
     }
-    if (sub2 === 'snooze')  {
+    if (sub2 === 'snooze') {
       const hours = interaction.options.getInteger('hours', true);
-      const until = Date.now() + hours*60*60*1000;
+      const until = Date.now() + hours * 60 * 60 * 1000;
       setUserPrefs(guildId, userId, { snooze_until_ts: until });
-      await interaction.reply({ content: `Snoozed until <t:${Math.floor(until/1000)}:R>.` });
+      await interaction.reply({ content: `Snoozed until <t:${Math.floor(until / 1000)}:R>.` });
       return;
     }
-    if (sub2 === 'set-channel') {
-      await requireAdmin(interaction);
-      const chan = interaction.options.getChannel('channel', false);
-      setReminderChannelId(guildId, (chan as any)?.id ?? null);
-      await interaction.reply({ content: chan ? `Reminder channel set to ${chan}` : 'Reminder channel cleared (DMs only).' });
-      return;
-    }
+    // Admin-only set-channel moved to /loan-admin reminders-set-channel
   }
 
   if (sub === 'apply') {
     const amount = interaction.options.getInteger('amount', true);
     await interaction.reply({ content: `📝 Reviewing your application for ${formatBolts(amount)}...` });
     const credit = getScore(guildId, userId);
-    try { console.log(JSON.stringify({ msg: 'loan_apply_open', userId, amount, credit, guildId })); } catch {}
+    try { console.log(JSON.stringify({ msg: 'loan_apply_open', userId, amount, credit, guildId })); } catch { }
     const uw = await underwrite(guildId, userId, amount, credit);
     if (!uw.approved) {
       const balNow = getBalance(guildId, userId);
@@ -178,11 +174,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           '**Reasons:**',
           ...uw.reasons.map((r) => `• ${r}`),
           '',
-        'Improve your credit by paying on time. Late payments increase APR and reduce limits.',
-        'Tip: enable alerts with /loan reminders.',
-      ].join('\n'));
+          'Improve your credit by paying on time. Late payments increase APR and reduce limits.',
+          'Tip: enable alerts with /loan reminders.',
+        ].join('\n'));
       await interaction.editReply({ content: '', embeds: [embed], components: [] });
-      try { console.log(JSON.stringify({ msg: 'loan_apply_denied', userId, amount, reasons: uw.reasons, guildId })); } catch {}
+      try { console.log(JSON.stringify({ msg: 'loan_apply_denied', userId, amount, reasons: uw.reasons, guildId })); } catch { }
       return;
     }
     // Approved: show preset term/APR options for the requested amount
@@ -221,7 +217,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
     // Disable after 15 minutes (remove components)
     setTimeout(async () => {
-      try { await interaction.editReply({ components: [] }); } catch {}
+      try { await interaction.editReply({ components: [] }); } catch { }
     }, 15 * 60 * 1000);
     return;
   }
@@ -230,38 +226,57 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await safeDefer(interaction, { ephemeral: false });
     const loans = listUserLoans(guildId, userId).map(l => accrueOnTouch(guildId, l));
     if (!loans.length) { await interaction.editReply({ content: 'You have no loans.' }); return; }
-    const lines = loans.map(l => {
-      const remaining = (l.principal - l.paid_principal) + (l.accrued_interest - l.paid_interest);
-      const days = Math.ceil((l.due_ts - Date.now())/86_400_000);
-      const dueTxt = days >= 0 ? `due in ${days}d` : `overdue by ${-days}d`;
-      return `• ${formatBolts(Number(l.principal))} @ ${(l.apr_bps/100).toFixed(2)}% • ${l.term_days}d • ${l.status} • remaining ${formatBolts(Number(remaining))} • ${dueTxt}`;
-    });
-    await interaction.editReply({ content: lines.join('\n') });
+    // Build LoanView[]
+    const loanViews = loans.map(l => ({
+      id: l.id,
+      principal: l.principal,
+      aprBps: l.apr_bps,
+      termDays: l.term_days,
+      status: l.status === 'defaulted' ? 'late' : l.status as 'active' | 'paid' | 'late',
+      remaining: (l.principal - l.paid_principal) + (l.accrued_interest - l.paid_interest),
+      dueAtTs: l.due_ts,
+    }));
+    const creditScore = getScore(guildId, userId);
+    const theme = getGuildTheme(guildId);
+    const fmt = {
+      pretty: (b: bigint) => formatBolts(Number(b)),
+      exactSmall: (b: bigint) => formatExact(b),
+      percent: (bps: number) => `${(bps / 100).toFixed(2)}%`,
+      relDue: (ts?: number) => ts ? `<t:${Math.floor(ts / 1000)}:R>` : 'N/A',
+      absDue: (ts?: number) => ts ? `<t:${Math.floor(ts / 1000)}:F>` : 'N/A',
+    };
+    const card = await buildLoanDetailsCard(loanViews, creditScore, fmt, theme);
+    const file = new AttachmentBuilder(card.buffer, { name: card.filename });
+    const embed = themedEmbed(theme, 'Loan Details', '').setImage(`attachment://${card.filename}`);
+    await interaction.editReply({ embeds: [embed], files: [file] });
     return;
   }
 
-  if (sub === 'credit-reset') {
-    await requireAdmin(interaction);
-    const target = interaction.options.getUser('user', true);
-    const s = resetScore(guildId, target.id);
-    const theme = getGuildTheme(guildId);
-    const embed = themedEmbed(theme, 'Credit Reset', `<@${target.id}> → ${s}/100`);
-    await interaction.reply({ embeds: [embed] });
-    return;
-  }
-
-  if (sub === 'forgive') {
-    await requireAdmin(interaction);
-    const target = interaction.options.getUser('user', true);
-    const n = forgiveAll(guildId, target.id);
-    // Reset balance to 0
-    const bal = getBalance(guildId, target.id);
-    if (bal > 0n) await adjustBalance(guildId, target.id, -bal, 'loan:forgive:reset');
-    resetScore(guildId, target.id);
-    const theme = getGuildTheme(guildId);
-    const embed = themedEmbed(theme, 'Loans Forgiven', `<@${target.id}> • ${n} loans marked forgiven; balance reset to 0; credit score reset.`);
-    await interaction.reply({ embeds: [embed] });
-    return;
+  // Admin-only actions (credit-reset, forgive)
+  if (sub === 'credit-reset' || sub === 'forgive') {
+    const db = getGuildDb(guildId);
+    try { ensureAdminAttached(db); } catch { /* ignore */ }
+    const ok = isAdminUser(db, interaction.user.id);
+    if (!ok) {
+      await interaction.reply({ content: 'This is an admin-only action. Use `/loan-admin`.', flags: MessageFlags.Ephemeral }).catch(() => { });
+      return;
+    }
+    if (sub === 'credit-reset') {
+      const target = interaction.options.getUser('user', true);
+      const s = resetScore(guildId, target.id);
+      await interaction.reply({ content: `Credit score reset for <@${target.id}> to ${s}/100.`, flags: MessageFlags.Ephemeral }).catch(() => { });
+      return;
+    }
+    if (sub === 'forgive') {
+      const target = interaction.options.getUser('user', true);
+      const n = forgiveAll(guildId, target.id);
+      // Reset positive balances to 0
+      const bal = getBalance(guildId, target.id);
+      if (bal > 0n) await adjustBalance(guildId, target.id, -bal, 'loan:forgive:reset');
+      resetScore(guildId, target.id);
+      await interaction.reply({ content: `Forgave ${n} loans; <@${target.id}>'s balance reset to 0 and credit score reset.`, flags: MessageFlags.Ephemeral }).catch(() => { });
+      return;
+    }
   }
 }
 
@@ -270,14 +285,14 @@ export async function handleSelect(interaction: StringSelectMenuInteraction) {
   if (prefix !== 'loan') return;
   if (!interaction.guildId) { await interaction.reply({ content: 'This bot only works in servers.' }); return; }
   if (action === 'offer') {
-    if (interaction.user.id !== uid) { await interaction.reply({ content: 'This selection is not for you.', flags: MessageFlags.Ephemeral }).catch(() => {}); return; }
+    if (interaction.user.id !== uid) { await interaction.reply({ content: 'This selection is not for you.', flags: MessageFlags.Ephemeral }).catch(() => { }); return; }
     const [amountStr, aprStr, termStr] = interaction.values[0].split(':');
     const amount = parseInt(amountStr, 10); const apr = parseInt(aprStr, 10); const term = parseInt(termStr, 10);
-    await interaction.deferUpdate().catch(() => {});
+    await interaction.deferUpdate().catch(() => { });
     const loan = await createAndCredit(interaction.guildId, interaction.user.id, amount, apr, term);
     const daily = Math.floor((Number(loan.principal) * apr) / 10000 / 365);
     const theme = getGuildTheme(interaction.guildId);
-    const headline = `Approved: ${formatBolts(Number(loan.principal))} • ${(apr/100).toFixed(2)}% • ${term}d`;
+    const headline = `Approved: ${formatBolts(Number(loan.principal))} • ${(apr / 100).toFixed(2)}% • ${term}d`;
     const bal = getBalance(interaction.guildId, interaction.user.id);
     const primary = walletEmbed({ title: 'Loan Created', headline, pretty: formatBalance(bal), exact: formatExact(bal) });
     const { embed: chartEmbed, file } = await buildChart({ principal: Number(loan.principal), aprBps: apr, termDays: term });
@@ -336,7 +351,7 @@ export async function handleButton(interaction: ButtonInteraction) {
   if (action === 'apply') {
     const subtype = parts[2];
     const uid = parts[3];
-    if (interaction.user.id !== uid) { await interaction.reply({ content: 'Not your application.', flags: MessageFlags.Ephemeral }).catch(() => {}); return; }
+    if (interaction.user.id !== uid) { await interaction.reply({ content: 'Not your application.', flags: MessageFlags.Ephemeral }).catch(() => { }); return; }
     if (subtype === 'toggleNotify') {
       const guildId = interaction.guildId!;
       const on = !getReminderPref(guildId, uid);
@@ -348,7 +363,7 @@ export async function handleButton(interaction: ButtonInteraction) {
         const parts2 = String(selectComp?.customId || '').split(':');
         amount = parseInt(parts2[4], 10) || 0;
         credit = parseInt(parts2[5], 10) || 0;
-      } catch {}
+      } catch { }
       // Rebuild select options
       const offers = offersForAmount(amount, credit);
       const sel = new StringSelectMenuBuilder()
@@ -383,34 +398,34 @@ export async function handleButton(interaction: ButtonInteraction) {
           new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(sel),
           new ActionRowBuilder<ButtonBuilder>().addComponents(applyBtn, toggleBtn, cancelBtn),
         ],
-      }).catch(() => {});
+      }).catch(() => { });
       return;
     }
     if (subtype === 'cancel') {
-      await interaction.update({ content: `Application canceled by <@${uid}>.`, embeds: [], components: [] }).catch(() => {});
+      await interaction.update({ content: `Application canceled by <@${uid}>.`, embeds: [], components: [] }).catch(() => { });
       return;
     }
     if (subtype === 'confirm') {
-      if (markOnce(`loan_apply_${interaction.message.id}`)) { await interaction.deferUpdate().catch(() => {}); return; }
+      if (markOnce(`loan_apply_${interaction.message.id}`)) { await interaction.deferUpdate().catch(() => { }); return; }
       const p = parseInt(parts[4], 10);
       const t = parseInt(parts[5], 10);
       const a = parseInt(parts[6], 10);
       const loan = await createAndCredit(interaction.guildId, interaction.user.id, p, a, t);
-      try { console.log(JSON.stringify({ msg: 'loan_apply_commit', userId: interaction.user.id, loanId: loan.id, principal: p, aprBps: a, termDays: t, guildId: interaction.guildId })); } catch {}
+      try { console.log(JSON.stringify({ msg: 'loan_apply_commit', userId: interaction.user.id, loanId: loan.id, principal: p, aprBps: a, termDays: t, guildId: interaction.guildId })); } catch { }
       const embed = new EmbedBuilder()
         .setTitle('Loan Approved')
         .setColor(0x2a7a2a)
         .setDescription(`Disbursed ${formatBolts(p)} to <@${uid}>. Due <t:${Math.floor(loan.due_ts / 1000)}:R>.`);
-      await interaction.update({ embeds: [embed], components: [] }).catch(() => {});
-      await interaction.followUp({ content: `📣 New loan: <@${uid}> took ${formatBolts(p)} at ${(a / 100).toFixed(2)}% for ${t}d.` }).catch(() => {});
+      await interaction.update({ embeds: [embed], components: [] }).catch(() => { });
+      await interaction.followUp({ content: `📣 New loan: <@${uid}> took ${formatBolts(p)} at ${(a / 100).toFixed(2)}% for ${t}d.` }).catch(() => { });
       return;
     }
   }
   const size = parts[2];
   if (action !== 'pay') return;
-  await interaction.deferUpdate().catch(() => {});
+  await interaction.deferUpdate().catch(() => { });
   const active = getActiveLoans(interaction.guildId, interaction.user.id).map(l => accrueOnTouch(interaction.guildId!, l));
-  if (!active.length) { await interaction.followUp({ content: 'You have no loans.', flags: MessageFlags.Ephemeral }).catch(() => {}); return; }
+  if (!active.length) { await interaction.followUp({ content: 'You have no loans.', flags: MessageFlags.Ephemeral }).catch(() => { }); return; }
   const loan = active[0];
   const owedInterest = loan.accrued_interest - loan.paid_interest;
   const owedPrincipal = loan.principal - loan.paid_principal;
@@ -420,12 +435,12 @@ export async function handleButton(interaction: ButtonInteraction) {
   else payAmt = Math.max(1, Number(owedInterest + owedPrincipal));
   const bal = getBalance(interaction.guildId, interaction.user.id);
   if (bal < BigInt(payAmt)) {
-    await interaction.followUp({ content: `Insufficient balance to pay ${formatBolts(payAmt)}.`, flags: MessageFlags.Ephemeral }).catch(() => {});
+    await interaction.followUp({ content: `Insufficient balance to pay ${formatBolts(payAmt)}.`, flags: MessageFlags.Ephemeral }).catch(() => { });
     return;
   }
   applyPayment(interaction.guildId, loan, payAmt);
   await adjustBalance(interaction.guildId, interaction.user.id, -payAmt, 'loan:payment');
   const newBal = getBalance(interaction.guildId, interaction.user.id);
   const primary = walletEmbed({ title: 'Payment Applied', headline: `Paid ${formatBolts(payAmt)}. New balance:`, pretty: formatBalance(newBal), exact: formatExact(newBal) });
-  await interaction.editReply({ embeds: [primary], components: [] }).catch(() => {});
+  await interaction.editReply({ embeds: [primary], components: [] }).catch(() => { });
 }

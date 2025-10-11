@@ -1,5 +1,5 @@
-import type { Client, Interaction, ChatInputCommandInteraction } from 'discord.js';
-import { MessageFlags } from 'discord.js';
+import type { Client, Interaction, ChatInputCommandInteraction, InteractionReplyOptions } from 'discord.js';
+import { MessageFlags, PermissionsBitField } from 'discord.js';
 import { resolveRuntime, VISIBILITY_MODE } from '../config/runtime.js';
 import { ui } from '../cli/ui.js';
 import log from '../cli/logger.js';
@@ -14,6 +14,9 @@ import * as LoanCmd from '../commands/loan/index.js';
 import { isEnabled, reason as disabledReason } from '../config/toggles.js';
 // Removed: amount exact/copy handlers and listeners (Exact/Copy buttons deprecated)
 import { getGuildDb } from '../db/connection.js';
+import { formatUserError, logError, buildErrorId } from '../utils/errors.js';
+import { isAdmin as hasAdmin, isSuperAdmin } from '../admin/permissions.js';
+import { getCommandControl } from '../db/commandControl.js';
 import { migrateGuildDb } from '../db/migrateGuild.js';
 import { safeDefer, replyError } from '../game/config.js';
 
@@ -141,6 +144,36 @@ export function initInteractionRouter(client: Client) {
         }
       }
       const name = i.commandName;
+      // Read subcommand early so whitelist gating can inspect it safely
+      let sub: string | null = null;
+      try { sub = (i as any).options?.getSubcommand?.(false) ?? null; } catch { sub = null; }
+      // Backstop: block known admin-only top-level commands if caller isn’t a Discord admin
+      const ADMIN_ONLY = new Set(['admin', 'rank-admin', 'loan-admin']);
+      const isDiscordAdmin = !!(i.member as any)?.permissions?.has?.(PermissionsBitField.Flags.Administrator);
+      if (ADMIN_ONLY.has(name) && !isDiscordAdmin) {
+        await i.reply({ content: 'You do not have permission to use this command.', flags: MessageFlags.Ephemeral }).catch(() => {});
+        return;
+      }
+      // Per-guild whitelist mode: allow only specific commands
+      if (i.guildId) {
+        try {
+          const db = getGuildDb(i.guildId);
+          const cc = getCommandControl(db, i.guildId);
+          // Compute escape hatch and optional super bypass before enforcing whitelist
+          const cmd = name.toLowerCase();
+          const isEscapeHatch = (cmd === 'admin' && (sub?.toLowerCase?.() ?? null) === 'whitelist-release');
+          let isSuper = false;
+          try { isSuper = isSuperAdmin(db, i.user.id); } catch { isSuper = false; }
+
+          if (cc.mode === 'whitelist' && !isEscapeHatch && !isSuper) {
+            const allowed: string[] = JSON.parse(cc.whitelist_json || '[]').map((s: string) => s.toLowerCase());
+            if (!allowed.includes(cmd)) {
+              await i.reply({ content: 'Command disabled (whitelist mode active). Use `/admin whitelist-release` to restore normal operation.', flags: MessageFlags.Ephemeral }).catch(() => { });
+              return;
+            }
+          }
+        } catch { /* ignore guard errors */ }
+      }
       if (!isEnabled(name)) {
         const r = disabledReason(name);
         await i.reply({
@@ -148,8 +181,7 @@ export function initInteractionRouter(client: Client) {
         }).catch(() => { });
         return;
       }
-      let sub: string | null = null;
-      try { sub = (i as any).options?.getSubcommand?.(false) ?? null; } catch { sub = null; }
+      // 'sub' already read above for whitelist gating
       const who = (i.user && (i.user.tag || i.user.username)) ? `${i.user.tag || i.user.username}#${i.user.id}` : i.user?.id || 'unknown';
       const where = `${(i.guild as any)?.name || i.guildId || 'DM'}${(i.channel as any)?.name ? ' (#' + (i.channel as any).name + ')' : ''}`;
       ui.say(`🎮 /${name}${sub ? ' ' + sub : ''} by ${who} in ${where}`, 'dim');
@@ -159,8 +191,8 @@ export function initInteractionRouter(client: Client) {
       const t = setTimeout(async () => {
         if (!i.deferred && !i.replied) {
           acknowledged = true;
-          const publicMode = VISIBILITY_MODE === 'public';
-          await i.deferReply(publicMode ? {} : { flags: MessageFlags.Ephemeral }).catch(() => { });
+          // Defer publicly to avoid locking visibility to ephemeral
+          await i.deferReply({}).catch(() => { });
           ; (i as any).__autoDeferred = true;
         }
       }, 1500);
@@ -186,8 +218,9 @@ export function initInteractionRouter(client: Client) {
               }
             } catch (retryErr) {
               console.error(JSON.stringify({ msg: 'handler_error', code: 'ERR-DB-SCHEMA', guildId: i.guildId, name: i.commandName, err: String(retryErr) }));
-              if (!acknowledged && !i.replied && !i.deferred) await i.reply({ content: 'Something went wrong (ERR-DB-SCHEMA)', flags: MessageFlags.Ephemeral }).catch(() => { });
-              else if (i.deferred && !i.replied) await i.editReply({ content: 'Something went wrong (ERR-DB-SCHEMA)' }).catch(() => { });
+              const msgOpts: InteractionReplyOptions = { content: 'Something went wrong (ERR-DB-SCHEMA)', allowedMentions: { parse: [] as const } };
+              if (!acknowledged && !i.replied && !i.deferred) await i.reply(msgOpts).catch(() => { });
+              else if (i.deferred && !i.replied) await i.editReply({ content: msgOpts.content }).catch(() => { });
               return;
             }
           }
@@ -200,11 +233,38 @@ export function initInteractionRouter(client: Client) {
           console.info(JSON.stringify({ msg: 'interaction_dup_ignored' }));
           return;
         }
-        console.error(JSON.stringify({ msg: 'handler_error', name: i.commandName, error: s }));
-        log.error('Command handler error', 'interaction', { command: i.commandName, error: String(e) });
+        // Enhanced error reporting: redact, correlate, and show more detail to admins
+        let isAdmin = false;
+        try {
+          if (i.guildId && i.user?.id) {
+            const db = getGuildDb(i.guildId);
+            isAdmin = hasAdmin(db, i.user.id);
+          }
+        } catch { /* ignore admin check failure */ }
+
+        const errorId = buildErrorId();
+        logError(
+          {
+            msg: 'command_error',
+            command: i.commandName,
+            guildId: i.guildId ?? null,
+            userId: i.user?.id ?? null,
+            options: (i as any).options?.data ?? null,
+            errorId,
+          },
+          e,
+        );
+
+        const content = formatUserError(i.commandName, e, isAdmin, errorId);
         logPermError(e, i);
-        if (!acknowledged && !i.replied && !i.deferred) await i.reply(VISIBILITY_MODE === 'public' ? { content: 'Something went wrong. Try again.' } : { content: 'Something went wrong. Try again.', flags: MessageFlags.Ephemeral }).catch(() => { });
-        else if (i.deferred && !i.replied) await i.editReply({ content: 'Sorry, something went wrong.' }).catch(() => { });
+        try {
+          const msgOpts: InteractionReplyOptions = { content, allowedMentions: { parse: [] as const } };
+          if (i.replied || i.deferred) await (i as any).followUp(msgOpts).catch(() => { });
+          else await i.reply(msgOpts).catch(() => { });
+        } catch {
+          // last resort
+          console.error(JSON.stringify({ msg: 'reply_failed', command: i.commandName, errorId }));
+        }
       } finally {
         clearTimeout(t);
       }

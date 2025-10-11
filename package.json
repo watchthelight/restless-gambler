@@ -33,7 +33,8 @@
     "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.mjs --runInBand",
     "build:cards": "node -e \"console.log('build:cards placeholder');\"",
     "setup:env": "node -e \"const fs=require('fs');if(!fs.existsSync('.env')){fs.copyFileSync('.env.example','.env');console.log('Created .env from .env.example');}else{console.log('.env already exists')}\"",
-    "start:cli": "node dist/index.js"
+    "start:cli": "node dist/index.js",
+    "launch": "npm run build && npm test && npm run start:pretty"
   },
   "dependencies": {
     "chokidar": "^3.6.0",

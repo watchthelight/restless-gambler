@@ -1,7 +1,6 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle, ButtonInteraction, AttachmentBuilder } from 'discord.js';
 import { adjustBalance, getBalance } from '../../economy/wallet.js';
 import { themedEmbed } from '../../ui/embeds.js';
-import { cryptoRNG } from '../../util/rng.js';
 import { BJState, Card } from './types.js';
 import { dealInitial, hit as bjHit, stand as bjStand, doubleDown as bjDouble, split as bjSplit, settle } from './engine.js';
 import { getGuildDb } from '../../db/connection.js';
@@ -11,7 +10,10 @@ import { formatBolts } from '../../economy/currency.js';
 import { outcomeMessage, formatBolt } from '../../ui/outcome.js';
 import { uiExactMode, uiSigFigs } from '../../game/config.js';
 import { renderAmountInline } from '../../util/amountRender.js';
-import { findActiveSession, createSession, updateSession, settleSession } from '../../game/blackjack/sessionStore.js';
+import { withUserLuck } from '../../rng/luck.js';
+import { onGambleXP } from '../../rank/xpEngine.js';
+import { rememberUserChannel } from '../../rank/announce.js';
+import { getSetting } from '../../db/kv.js';
 
 export const data = new SlashCommandBuilder()
   .setName('blackjack')
@@ -23,25 +25,13 @@ function renderCard(c: Card): string {
   return `${c.r}${suit}`;
 }
 
-function renderState(userId: string, state: BJState) {
-  const theme = getGuildTheme(null);
-  const embed = themedEmbed(theme, '🂡 Blackjack', 'Dealer stands on soft 17.');
-  const row = new ActionRowBuilder<ButtonBuilder>();
-  row.addComponents(
-    new ButtonBuilder().setCustomId(`bj:hit:${userId}`).setStyle(ButtonStyle.Primary).setLabel('Hit'),
-    new ButtonBuilder().setCustomId(`bj:stand:${userId}`).setStyle(ButtonStyle.Secondary).setLabel('Stand'),
-    new ButtonBuilder().setCustomId(`bj:double:${userId}`).setStyle(ButtonStyle.Success).setLabel('Double'),
-    new ButtonBuilder().setCustomId(`bj:split:${userId}`).setStyle(ButtonStyle.Danger).setLabel('Split'),
-  );
-  return { embeds: [embed], components: [row] } as any;
-}
-
 export async function execute(interaction: ChatInputCommandInteraction) {
   if (!interaction.guildId) { await interaction.reply({ content: 'This bot only works in servers.' }); return; }
+  rememberUserChannel(interaction.guildId, interaction.user.id, interaction.channelId);
   const bet = interaction.options.getInteger('bet', true);
   const userId = interaction.user.id;
   const bal = getBalance(interaction.guildId, userId);
-  if (bal < bet) {
+  if (bal < BigInt(bet)) {
     const db = getGuildDb(interaction.guildId);
     const mode = uiExactMode(db, "guild");
     const sig = uiSigFigs(db);
@@ -52,7 +42,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply();
   // reserve bet
   await adjustBalance(interaction.guildId, userId, -bet, 'blackjack:bet');
-  const state = dealInitial(bet, cryptoRNG);
+
+  // Apply luck bias to RNG for card draws (very subtle)
+  const db = getGuildDb(interaction.guildId);
+  const ranksEnabled = (getSetting(db, 'features.ranks.enabled') !== 'false');
+  const luckyRng = ranksEnabled
+    ? () => withUserLuck(interaction.guildId!, userId, () => Math.random())
+    : () => Math.random();
+  const state = dealInitial(bet, luckyRng);
   persistState(interaction.guildId, interaction.channelId, userId, state);
   const theme = getGuildTheme(interaction.guildId);
   const hand = state.playerHands[state.activeIndex];
@@ -148,6 +145,15 @@ export async function handleButton(interaction: ButtonInteraction) {
     const headline = delta > 0 ? outcomeMessage('win', delta) : delta < 0 ? outcomeMessage('loss', Math.abs(delta)) : outcomeMessage('push');
     const final = themedEmbed(theme, '🂡 Blackjack Result', `${headline}
 New balance: ${balText}`).setImage(`attachment://${card.filename}`);
+
+    // Award XP for completed hand
+    try {
+      const ranksEnabled = (getSetting(db, 'features.ranks.enabled') !== 'false');
+      if (ranksEnabled) {
+        onGambleXP(interaction.guildId, userId, state.bet, Number(balanceNow));
+      }
+    } catch { }
+
     clearState(interaction.guildId, interaction.channelId, userId);
     await interaction.reply({ embeds: [final], files: [file] });
   } else {

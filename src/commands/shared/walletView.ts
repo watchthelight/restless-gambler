@@ -1,4 +1,6 @@
+// UPDATE FILE: src/commands/shared/walletView.ts
 import { EmbedBuilder } from "discord.js";
+import { themedEmbed } from "../../ui/embeds.js";
 
 type WalletViewArgs = {
   title?: string;
@@ -8,13 +10,11 @@ type WalletViewArgs = {
 };
 
 export function walletEmbed(a: WalletViewArgs) {
-  return new EmbedBuilder()
-    .setTitle(a.title ?? "Wallet")
-    .setDescription([
-      a.headline ? `${a.headline} ${a.pretty}` : a.pretty,
-      "",
-      `\`exact: ${a.exact} 🪙\``,
-    ].join("\n"))
-    .setColor(0x0f192a);
+  const desc = [
+    a.headline ? `${a.headline} ${a.pretty}` : a.pretty,
+    "",
+    `\`exact: ${a.exact} 🪙\``,
+  ].join("\n");
+  return themedEmbed('neutral', a.title ?? 'Wallet', desc);
 }
 

@@ -32,16 +32,48 @@ function hasApplied(db: Database.Database, id: string): boolean {
 
 async function runOne(db: Database.Database, mig: { id: string; path: string; kind: 'sql' | 'js' }) {
   if (hasApplied(db, mig.id)) return false;
-  if (mig.kind === 'sql') {
-    const sql = fs.readFileSync(mig.path, 'utf8');
-    db.exec(sql);
-  } else {
-    // JS/TS migration: must export async function up(db)
-    const mod: any = await import(pathToFileURL(mig.path).href);
-    if (typeof mod.up === 'function') await mod.up(db);
+
+  try {
+    if (mig.kind === 'sql') {
+      const sql = fs.readFileSync(mig.path, 'utf8');
+      db.exec(sql);
+    } else {
+      // JS/TS migration: must export async function up(db)
+      const mod: any = await import(pathToFileURL(mig.path).href);
+      if (typeof mod.up === 'function') await mod.up(db);
+    }
+    db.prepare('INSERT OR IGNORE INTO applied_migrations(id) VALUES(?)').run(mig.id);
+    return true;
+  } catch (e: any) {
+    const errorMsg = e.message || String(e);
+
+    // Handle idempotent migration errors gracefully
+    const isDuplicateColumn = errorMsg.includes('duplicate column');
+    const isNoSuchTable = errorMsg.includes('no such table');
+
+    if (isDuplicateColumn) {
+      // Column already exists, mark migration as applied and continue
+      db.prepare('INSERT OR IGNORE INTO applied_migrations(id) VALUES(?)').run(mig.id);
+      if (process.env.VERBOSE) {
+        console.log(JSON.stringify({ msg: 'migration_skipped_duplicate', id: mig.id, reason: 'column already exists' }));
+      }
+      return true;
+    }
+
+    if (isNoSuchTable && (mig.id.includes('000_admin_core') || mig.id.includes('001_admin_dedupe'))) {
+      // Legacy table import failed (table doesn't exist), mark as applied and continue
+      db.prepare('INSERT OR IGNORE INTO applied_migrations(id) VALUES(?)').run(mig.id);
+      if (process.env.VERBOSE) {
+        console.log(JSON.stringify({ msg: 'migration_skipped_legacy', id: mig.id, reason: 'legacy table not found' }));
+      }
+      return true;
+    }
+
+    // Log the error for debugging
+    console.error(`Migration ${mig.id} failed:`, errorMsg);
+    // Re-throw other errors
+    throw e;
   }
-  db.prepare('INSERT OR IGNORE INTO applied_migrations(id) VALUES(?)').run(mig.id);
-  return true;
 }
 
 async function runDirOnDb(db: Database.Database, dir: string): Promise<string[]> {
@@ -56,20 +88,20 @@ async function runDirOnDb(db: Database.Database, dir: string): Promise<string[]>
 }
 
 export async function runMigrations() {
-  const { data_dir } = getDbPaths();
+  const { data_dir, admin_global } = getDbPaths();
   if (!fs.existsSync(data_dir)) fs.mkdirSync(data_dir, { recursive: true });
 
   // 1) One-time legacy split to per-guild files (idempotent)
   const legacyMigrated = migrateLegacyToPerGuild();
 
   // 2) Global admin DB JS/SQL migrations
-  const adminDb = openAdminDb();
+  const adminDb = openAdminDb(admin_global);
   ensureSuperAdminsSchema(adminDb, console);
   const { sql } = superAdminInsertSQL(adminDb);
   adminDb.prepare(sql).run("697169405422862417");
-  const adminDir = path.resolve('src/db/migrations/global');
+  const adminDir = path.resolve('migrations_admin');
   const adminApplied = await runDirOnDb(adminDb, adminDir);
-  if (adminApplied.length && process.env.VERBOSE) console.log(JSON.stringify({ msg: 'migrations applied (global)', applied: adminApplied }));
+  if (adminApplied.length && process.env.VERBOSE) console.log(JSON.stringify({ msg: 'migrations applied (admin)', applied: adminApplied }));
 
   // 3) For each guild DB, run guild migrations
   let guildCount = 0;

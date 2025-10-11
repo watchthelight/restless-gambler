@@ -9,10 +9,11 @@ describe('admin roles', () => {
   test('seed and role resolution', async () => {
     const { getDB } = await import('../../db/connection.js');
     const db = getDB('admin');
+    // Use updated schema with added_at (matches admin_global.sql)
     db.exec(`
       CREATE TABLE IF NOT EXISTS super_admins(
         user_id TEXT PRIMARY KEY,
-        created_at INTEGER
+        added_at INTEGER DEFAULT (strftime('%s','now'))
       );
     `);
     const { seedSuperAdmin, getRole, Role, addAdmin, removeAdmin } = await import('../roles.js');

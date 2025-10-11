@@ -13,6 +13,11 @@ import { outcomeMessage, formatBolt } from '../../ui/outcome.js';
 import { getSettingNum } from '../../db/kv.js';
 import { safeDefer, safeEdit, replyError, uiExactMode, uiSigFigs } from '../../game/config.js';
 import { renderAmountInline } from '../../util/amountRender.js';
+import { ensureGuildInteraction } from '../../interactions/guards.js';
+import { withUserLuck } from '../../rng/luck.js';
+import { onGambleXP } from '../../rank/xpEngine.js';
+import { rememberUserChannel } from '../../rank/announce.js';
+import { getSetting } from '../../db/kv.js';
 
 export const data = new SlashCommandBuilder()
   .setName('roulette')
@@ -49,13 +54,14 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
+  if (!await ensureGuildInteraction(interaction)) return;
+
   const userId = interaction.user.id;
+  rememberUserChannel(interaction.guildId!, interaction.user.id, interaction.channelId);
   const betAmount = interaction.options.getInteger('bet', true);
   const type = interaction.options.getString('type', true) as Bet['type'];
   const selection = interaction.options.getString('selection') ?? '';
-
-  if (!interaction.guildId) { await interaction.reply({ content: 'This bot only works in servers.' }); return; }
-  const db = getGuildDb(interaction.guildId);
+  const db = getGuildDb(interaction.guildId!);
 
   // KV-driven with sane defaults
   let minBet = getSettingNum(db, 'roulette.min_bet', 10);
@@ -85,7 +91,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     await interaction.reply({ content: `Maximum bet is ${formatBolts(maxBet)}.` });
     return;
   }
-  const bal = getBalance(interaction.guildId, userId);
+  const bal = getBalance(interaction.guildId!, userId);
   if (bal < betAmount) {
     const mode = uiExactMode(db, "guild");
     const sig = uiSigFigs(db);
@@ -94,16 +100,18 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  await safeDefer(interaction, true);
+  await safeDefer(interaction, false);
   try {
     const bet: Bet = { type, amount: betAmount, selection };
-    const outcome = spinWheel(cryptoRNG);
+    const ranksEnabled = (getSetting(db, 'features.ranks.enabled') !== 'false');
+    const rng = (max: number) => Math.floor(((ranksEnabled ? withUserLuck(interaction.guildId!, userId, () => Math.random()) : Math.random())) * max);
+    const outcome = spinWheel(rng);
     const summary = resolveBets(outcome, [bet]);
-    await adjustBalance(interaction.guildId, userId, -betAmount, 'roulette:bet');
-    if (summary.payout > 0) await adjustBalance(interaction.guildId, userId, summary.payout, 'roulette:win');
-    const newBal = getBalance(interaction.guildId, userId);
+    await adjustBalance(interaction.guildId!, userId, -betAmount, 'roulette:bet');
+    if (summary.payout > 0) await adjustBalance(interaction.guildId!, userId, summary.payout, 'roulette:win');
+    const newBal = getBalance(interaction.guildId!, userId);
 
-    const theme = getGuildTheme(interaction.guildId);
+    const theme = getGuildTheme(interaction.guildId!);
     const delta = summary.payout - betAmount;
     const card = await generateCard({
       layout: 'GameResult',
@@ -135,6 +143,8 @@ New balance: ${balText}`).setImage(`attachment://${card.filename}`);
         new StringSelectMenuOptionBuilder().setLabel('2nd 12').setValue('dozen:2'),
         new StringSelectMenuOptionBuilder().setLabel('3rd 12').setValue('dozen:3'),
       );
+    // XP grant once per completed round
+    try { if (ranksEnabled) onGambleXP(interaction.guildId!, userId, betAmount, Number(newBal)); } catch { }
     await safeEdit(interaction, { embeds: [embed], files: [file], components: [primary, new ActionRowBuilder<any>().addComponents(selects as any)] });
   } catch (e: any) {
     await replyError(interaction, "ERR-ROULETTE", console, { err: String(e) });

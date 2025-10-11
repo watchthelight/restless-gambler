@@ -3,6 +3,10 @@ import { Theme } from './theme.js';
 import { iconBuffer, IconName } from './icons.js';
 import { formatBolts } from '../economy/currency.js';
 import './fonts.js';
+import { themedEmbed } from './embeds.js';
+import { getGuildTheme } from './theme.js';
+import { getClient } from '../bot/client.js';
+import type { TextChannel } from 'discord.js';
 
 type GameResultPayload =
   | { kind: 'slots'; grid: string[][]; bet: number; payout: number; delta: number; balance: number | bigint }
@@ -15,11 +19,37 @@ type NoticePayload = { title: string; message: string };
 
 type WalletPayload = { balance: number | bigint; title?: string; subtitle?: string };
 
+type SyncPayload = { globalCount: number; perGuild: Array<{ guildId: string; purged: number }>; };
+
+type LoanView = {
+  id: string;
+  principal: bigint;
+  aprBps: number;
+  termDays: number;
+  status: 'active' | 'paid' | 'late';
+  remaining: bigint;
+  dueAtTs?: number;
+};
+
+type LoanDetailsPayload = {
+  loans: LoanView[];
+  creditScore?: number;
+  fmt: {
+    pretty: (b: bigint) => string;
+    exactSmall: (b: bigint) => string;
+    percent: (bps: number) => string;
+    relDue: (ts?: number) => string;
+    absDue: (ts?: number) => string;
+  };
+};
+
 export type CardOpts =
   | { layout: 'GameResult'; theme: Theme; payload: GameResultPayload }
   | { layout: 'List'; theme: Theme; payload: ListPayload }
   | { layout: 'Notice'; theme: Theme; payload: NoticePayload }
-  | { layout: 'Wallet'; theme: Theme; payload: WalletPayload };
+  | { layout: 'Wallet'; theme: Theme; payload: WalletPayload }
+  | { layout: 'Sync'; theme: Theme; payload: SyncPayload }
+  | { layout: 'LoanDetails'; theme: Theme; payload: LoanDetailsPayload };
 
 export async function generateCard(opts: CardOpts): Promise<{ buffer: Buffer; filename: string }> {
   const filename = `${opts.layout.toLowerCase()}-${Date.now()}.png`;
@@ -82,6 +112,12 @@ export async function generateCard(opts: CardOpts): Promise<{ buffer: Buffer; fi
         break;
       case 'Wallet':
         renderWallet(ctx, opts);
+        break;
+      case 'Sync':
+        renderSync(ctx, opts);
+        break;
+      case 'LoanDetails':
+        renderLoanDetails(ctx, opts);
         break;
     }
 
@@ -150,6 +186,8 @@ function headerTitleFor(opts: CardOpts): string {
   if (opts.layout === 'List') return 'Top Bolts Holders';
   if (opts.layout === 'Notice') return 'Notice';
   if (opts.layout === 'Wallet') return 'Wallet';
+  if (opts.layout === 'Sync') return 'Command Sync';
+  if (opts.layout === 'LoanDetails') return 'Loan Details';
   return 'Card';
 }
 
@@ -169,6 +207,8 @@ function headerIconFor(opts: CardOpts): IconName {
   if (opts.layout === 'List') return 'crown';
   if (opts.layout === 'Notice') return 'warning';
   if (opts.layout === 'Wallet') return 'wallet';
+  if (opts.layout === 'Sync') return 'warning';
+  if (opts.layout === 'LoanDetails') return 'wallet';
   return 'wallet';
 }
 
@@ -262,6 +302,61 @@ function renderWallet(ctx: any, opts: Extract<CardOpts, { layout: 'Wallet' }>) {
   }
 }
 
+function renderSync(ctx: any, opts: Extract<CardOpts, { layout: 'Sync' }>) {
+  const { payload, theme } = opts;
+  let message = `global: ${payload.globalCount}\n`;
+  if (payload.perGuild.length === 0) {
+    message += 'Purged per-guild: none';
+  } else {
+    message += 'Purged per-guild:\n';
+    const shown = payload.perGuild.slice(0, 15);
+    message += shown.map(p => `• ${p.guildId} (purged ${p.purged})`).join('\n');
+    const extra = payload.perGuild.length - shown.length;
+    if (extra > 0) {
+      message += `\n... and ${extra} more`;
+    }
+  }
+  message += `\n\nToday at ${new Date().toLocaleTimeString()}`;
+  ctx.fillStyle = theme.warn;
+  ctx.font = '700 20px "Inter", system-ui';
+  ctx.fillText('Command Sync', 60, 140);
+  ctx.fillStyle = theme.textPrimary;
+  ctx.font = '500 14px "Inter", system-ui';
+  wrapText(ctx, message, 60, 180, 880, 24);
+}
+
+function renderLoanDetails(ctx: any, opts: Extract<CardOpts, { layout: 'LoanDetails' }>) {
+  const { payload, theme } = opts;
+  let message = '';
+  if (payload.loans.length === 0) {
+    message = 'No loans on file.';
+  } else {
+    const shown = payload.loans.slice(0, 10);
+    for (const loan of shown) {
+      const statusIcon = loan.status === 'late' ? '⚠️ ' : '';
+      message += `${statusIcon}Amount: ${payload.fmt.pretty(loan.principal)} (${payload.fmt.exactSmall(loan.principal)})\n`;
+      message += `APR: ${payload.fmt.percent(loan.aprBps)}\n`;
+      message += `Term: ${loan.termDays} days\n`;
+      message += `Status: ${loan.status}\n`;
+      message += `Remaining: ${payload.fmt.pretty(loan.remaining)} (${payload.fmt.exactSmall(loan.remaining)})\n`;
+      message += `Due: ${payload.fmt.relDue(loan.dueAtTs)} (${payload.fmt.absDue(loan.dueAtTs)})\n\n`;
+    }
+    const extra = payload.loans.length - shown.length;
+    if (extra > 0) {
+      message += `... and ${extra} more`;
+    }
+  }
+  if (payload.creditScore !== undefined) {
+    message += `\nCredit score: ${payload.creditScore}/100`;
+  }
+  ctx.fillStyle = theme.warn;
+  ctx.font = '700 20px "Inter", system-ui';
+  ctx.fillText('Loan Details', 60, 140);
+  ctx.fillStyle = theme.textPrimary;
+  ctx.font = '500 14px "Inter", system-ui';
+  wrapText(ctx, message, 60, 180, 880, 24);
+}
+
 function wrapText(ctx: any, text: string, x: number, y: number, maxWidth: number, lineHeight: number) {
   const words = text.split(' ');
   let line = '';
@@ -278,6 +373,44 @@ function wrapText(ctx: any, text: string, x: number, y: number, maxWidth: number
   }
   ctx.fillText(line, x, y);
 }
+
+// Simple helper to send a lightweight announcement card to a channel.
+// Uses themed embed (no heavy image render) for quick notices.
+export async function sendChannelCard(
+  guildId: string,
+  channelId: string,
+  opts: { title: string; lines: string[] },
+) {
+  try {
+    const client = getClient();
+    const ch = await client.channels.fetch(channelId);
+    if (!ch || !('send' in (ch as any))) return;
+    const theme = getGuildTheme(guildId);
+    const embed = themedEmbed(theme, opts.title, opts.lines.join('\n'));
+    await (ch as TextChannel).send({ embeds: [embed] });
+  } catch { /* ignore send errors */ }
+}
+
+export async function buildCommandSyncCard(result: { globalCount: number; purged: Array<{ guildId: string; count: number }>; purgedDisabled: number }, theme: Theme): Promise<{ buffer: Buffer; filename: string }> {
+  const res = { globalCount: result.globalCount, perGuild: result.purged.map(p => ({ guildId: p.guildId, purged: p.count })) };
+  return generateCard({ layout: 'Sync', theme, payload: res });
+}
+
+export async function buildLoanDetailsCard(
+  loans: LoanView[],
+  creditScore: number | undefined,
+  fmt: {
+    pretty: (b: bigint) => string;
+    exactSmall: (b: bigint) => string;
+    percent: (bps: number) => string;
+    relDue: (ts?: number) => string;
+    absDue: (ts?: number) => string;
+  },
+  theme: Theme
+): Promise<{ buffer: Buffer; filename: string }> {
+  return generateCard({ layout: 'LoanDetails', theme, payload: { loans, creditScore, fmt } });
+}
+
 
 function getGameVals(payload: GameResultPayload) {
   const betN = 'bet' in payload ? payload.bet : 0;

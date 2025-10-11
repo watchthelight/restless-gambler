@@ -1,17 +1,16 @@
 {
   "commands": {
-    "roulette": {
+    "ping": {
       "enabled": true
     },
-    "holdem": {
-      "enabled": false,
-      "reason": "maintinence"
+    "test": {
+      "enabled": false
     },
     "admin": {
       "enabled": true
     },
     "admin-reboot": {
-      "enabled": false
+      "enabled": true
     },
     "admin-repair": {
       "enabled": true
@@ -23,7 +22,7 @@
       "enabled": true
     },
     "canary": {
-      "enabled": false
+      "enabled": true
     },
     "config": {
       "enabled": true
@@ -38,10 +37,7 @@
       "enabled": true
     },
     "dev-demo": {
-      "enabled": false
-    },
-    "faucet": {
-      "enabled": false
+      "enabled": true
     },
     "gamble": {
       "enabled": true
@@ -50,7 +46,10 @@
       "enabled": true
     },
     "help": {
-      "enabled": false
+      "enabled": true
+    },
+    "holdem": {
+      "enabled": true
     },
     "leaderboard": {
       "enabled": true
@@ -58,10 +57,19 @@
     "loan": {
       "enabled": true
     },
-    "ping": {
+    "loan-admin": {
+      "enabled": true
+    },
+    "rank": {
+      "enabled": true
+    },
+    "rank-admin": {
       "enabled": true
     },
     "resetme": {
+      "enabled": true
+    },
+    "roulette": {
       "enabled": true
     },
     "slots": {
@@ -73,5 +81,13 @@
     "transfer": {
       "enabled": true
     }
+  },
+  "limits": {
+    "min_bet": 1,
+    "max_bet": 100000,
+    "faucet_limit": 250,
+    "public_results": true,
+    "give_percent_max": 50,
+    "admin_give_cap": "1000000000000000"
   }
 }

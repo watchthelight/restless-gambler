@@ -1,4 +1,4 @@
-import { ChatInputCommandInteraction, SlashCommandBuilder, SlashCommandOptionsOnlyBuilder, SlashCommandSubcommandsOnlyBuilder } from 'discord.js';
+import { ChatInputCommandInteraction, SlashCommandBuilder, SlashCommandOptionsOnlyBuilder, SlashCommandSubcommandsOnlyBuilder, PermissionFlagsBits } from 'discord.js';
 import * as Canary from './canary.js';
 import * as Help from './help.js';
 import * as SlotsCmd from '../../games/slots/commands.js';
@@ -10,10 +10,13 @@ import * as HoldemCmds from '../../games/holdem/commands.js';
 import * as DevCmd from '../dev.js';
 import * as AdminCmd from '../admin/index.js';
 import * as LoanCmd from '../loan/index.js';
-import { requireAdmin } from '../../admin/roles.js';
+import { requireAdmin } from '../../admin/guard.js';
 import * as AdminRepair from './admin-repair.js';
 import * as Ping from './ping.js';
 import * as Theme from './theme.js';
+import * as RankCmd from '../rank/index.js';
+import * as RankAdminCmd from '../rank/admin.js';
+import * as LoanAdminCmd from '../loan-admin/index.js';
 
 type Builder = SlashCommandBuilder | SlashCommandOptionsOnlyBuilder | SlashCommandSubcommandsOnlyBuilder;
 type Slash = { name: string; data: Builder; run: (i: ChatInputCommandInteraction) => Promise<void> };
@@ -26,7 +29,9 @@ const DevDemo: Slash = {
   name: 'dev-demo',
   data: new SlashCommandBuilder()
     .setName('dev-demo')
-    .setDescription('Render a demo card (admin only)')
+    .setDescription('Render a demo card (admin only) • v2')
+    .setDefaultMemberPermissions(null)
+    .setDMPermission(false)
     .addStringOption((o) => o.setName('component').setDescription('notice|list|wallet|slots|roulette|blackjack').setRequired(true)),
   run: async (i) => {
     await requireAdmin(i);
@@ -41,7 +46,9 @@ const AdminReboot: Slash = {
   name: 'admin-reboot',
   data: new SlashCommandBuilder()
     .setName('admin-reboot')
-    .setDescription('Reboot the bot (admin only)'),
+    .setDescription('Reboot the bot (admin only) • v2')
+    .setDefaultMemberPermissions(null)
+    .setDMPermission(false),
   run: async (i) => {
     // mimic subcommand call
     (i as any).options.getSubcommand = () => 'reboot';
@@ -58,6 +65,7 @@ export function getSlashCommands(): Slash[] {
 
   add({ name: Canary.data.name, data: Canary.data as Builder, run: Canary.run });
   add(HelpSlash);
+  // Help categories unified under /help subcommands
   add(DevDemo);
   add(AdminReboot);
   add({ name: AdminRepair.data.name, data: AdminRepair.data as Builder, run: AdminRepair.run });
@@ -79,6 +87,10 @@ export function getSlashCommands(): Slash[] {
   // Admin original (subcommands) and Dev original (names differ from flat ones)
   add({ name: DevCmd.data.name, data: DevCmd.data as Builder, run: DevCmd.execute as any });
   add({ name: AdminCmd.data.name, data: AdminCmd.data as Builder, run: AdminCmd.execute as any });
+  // Rank system
+  add({ name: RankCmd.data.name, data: RankCmd.data as Builder, run: RankCmd.execute as any });
+  add({ name: RankAdminCmd.data.name, data: RankAdminCmd.data as Builder, run: RankAdminCmd.execute as any });
+  add({ name: LoanAdminCmd.data.name, data: LoanAdminCmd.data as Builder, run: LoanAdminCmd.execute as any });
   return out;
 }
 

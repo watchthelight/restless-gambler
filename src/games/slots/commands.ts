@@ -17,6 +17,11 @@ import { getGuildDb } from '../../db/connection.js';
 import { outcomeMessage, formatBolt } from '../../ui/outcome.js';
 import { slotsLimits, safeDefer, safeEdit, replyError, uiExactMode, uiSigFigs } from '../../game/config.js';
 import { renderAmountInline } from '../../util/amountRender.js';
+import { ensureGuildInteraction } from '../../interactions/guards.js';
+import { withUserLuck } from '../../rng/luck.js';
+import { onGambleXP } from '../../rank/xpEngine.js';
+import { rememberUserChannel } from '../../rank/announce.js';
+import { getSetting } from '../../db/kv.js';
 
 export const data = new SlashCommandBuilder()
   .setName('slots')
@@ -26,14 +31,15 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
+  if (!await ensureGuildInteraction(interaction)) return;
+  rememberUserChannel(interaction.guildId!, interaction.user.id, interaction.channelId);
   await safeDefer(interaction, false);
   try {
     const bet = interaction.options.getInteger('bet', true);
     const userId = interaction.user.id;
-    if (!interaction.guildId) { return safeEdit(interaction, { content: 'This bot only works in servers.' }); }
-    const current = getBalance(interaction.guildId, userId);
+    const current = getBalance(interaction.guildId!, userId);
     // limits
-    const db = getGuildDb(interaction.guildId);
+    const db = getGuildDb(interaction.guildId!);
     const { minBet, maxBet } = slotsLimits(db);
     if (bet < minBet) {
       return safeEdit(interaction, { flags: MessageFlags.Ephemeral, content: `Minimum bet is ${formatBolts(minBet)}.` });
@@ -41,18 +47,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (bet > maxBet) {
       return safeEdit(interaction, { flags: MessageFlags.Ephemeral, content: `Maximum bet is ${formatBolts(maxBet)}.` });
     }
-    if (current < bet) {
+    if (current < BigInt(bet)) {
       const mode = uiExactMode(db, "guild");
       const sig = uiSigFigs(db);
       const balText = mode === "inline" ? renderAmountInline(current, sig) : formatBolts(current);
       return safeEdit(interaction, { flags: MessageFlags.Ephemeral, content: `Insufficient balance. Your balance is ${balText}.` });
     }
-    const result = spin(bet, defaultConfig, cryptoRNG);
+    const ranksEnabled = (getSetting(db, 'features.ranks.enabled') !== 'false');
+    const biasedRng = (max: number) => Math.floor(((ranksEnabled ? withUserLuck(interaction.guildId!, userId, () => Math.random()) : Math.random())) * max);
+    const result = spin(bet, defaultConfig, biasedRng);
     const net = result.payout - bet;
-    await adjustBalance(interaction.guildId, userId, -bet, 'slots:bet');
-    if (result.payout > 0) await adjustBalance(interaction.guildId, userId, result.payout, 'slots:win');
-    const newBal = getBalance(interaction.guildId, userId);
-    const theme = getGuildTheme(interaction.guildId);
+    await adjustBalance(interaction.guildId!, userId, -bet, 'slots:bet');
+    if (result.payout > 0) await adjustBalance(interaction.guildId!, userId, result.payout, 'slots:win');
+    const newBal = getBalance(interaction.guildId!, userId);
+    const theme = getGuildTheme(interaction.guildId!);
     const card = await generateCard({
       layout: 'GameResult',
       theme,
@@ -81,6 +89,12 @@ New balance: ${balText}`).setImage(
         new StringSelectMenuOptionBuilder().setLabel(`10% (${formatBolts(Math.max(1, Math.floor(Number(newBal) * 0.1)))})`).setValue(String(Math.max(1, Math.floor(Number(newBal) * 0.1)))),
         new StringSelectMenuOptionBuilder().setLabel(`25% (${formatBolts(Math.max(1, Math.floor(Number(newBal) * 0.25)))})`).setValue(String(Math.max(1, Math.floor(Number(newBal) * 0.25)))),
       );
+    // XP grant once per completed round
+    try {
+      if (ranksEnabled) {
+        onGambleXP(interaction.guildId!, userId, bet, Number(newBal));
+      }
+    } catch { }
     return safeEdit(interaction, { embeds: [embed], files: [file], components: [primary, new Row<any>().addComponents(betSelect as any)] });
   } catch (e: any) {
     return replyError(interaction, "ERR-SLOTS", console, { err: String(e) });

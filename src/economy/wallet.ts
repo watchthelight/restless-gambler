@@ -1,15 +1,12 @@
 import { getGuildDb } from '../db/connection.js';
 import { userLocks } from '../util/locks.js';
+import { dbToBigint, toBigInt, bigintToDb } from '../utils/bigint.js';
 
 export function getBalance(guildId: string, userId: string): bigint {
   const db = getGuildDb(guildId);
   const row = db.prepare('SELECT balance FROM balances WHERE user_id = ?').get(userId) as { balance?: number | string | bigint } | undefined;
   if (!row || row.balance == null) return 0n;
-  // Coerce to bigint safely
-  const b = typeof row.balance === 'bigint' ? row.balance
-    : typeof row.balance === 'number' ? BigInt(Math.trunc(row.balance))
-      : BigInt(parseInt(row.balance as string) || 0);
-  return b;
+  return dbToBigint(row.balance);
 }
 
 export async function adjustBalance(
@@ -22,18 +19,16 @@ export async function adjustBalance(
     const now = Date.now();
     const db = getGuildDb(guildId);
     const txn = db.transaction(() => {
-      const row = db.prepare('SELECT balance FROM balances WHERE user_id = ?').get(userId) as
-        | { balance: number }
-        | undefined;
-      const current = getBalance(guildId, userId);
-      const inc = typeof delta === 'bigint' ? delta : BigInt(Math.trunc(delta));
+      const row = db.prepare('SELECT balance FROM balances WHERE user_id = ?').get(userId) as { balance?: number | string | bigint } | undefined;
+      const current = row?.balance != null ? dbToBigint(row.balance) : 0n;
+      const inc = toBigInt(delta);
       const next = current + inc;
       if (next < 0n) {
         throw new Error('Insufficient balance');
       }
       db.prepare('INSERT INTO balances(user_id, balance, updated_at) VALUES(?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET balance = excluded.balance, updated_at = excluded.updated_at').run(
         userId,
-        Number(next),
+        bigintToDb(next),
         now,
       );
       db.prepare(
@@ -51,7 +46,7 @@ export async function transfer(
   toUserId: string,
   amount: number | bigint,
 ): Promise<{ from: bigint; to: bigint }> {
-  const amt = typeof amount === 'bigint' ? amount : BigInt(Math.trunc(amount));
+  const amt = toBigInt(amount);
   if (amt <= 0n) throw new Error('Amount must be positive');
   // Order locks deterministically to avoid deadlocks
   const [a, b] = [`${guildId}:${fromUserId}`, `${guildId}:${toUserId}`].sort();
@@ -63,15 +58,15 @@ export async function transfer(
         const from = getBalance(guildId, fromUserId);
         if (from < amt) throw new Error('Insufficient balance');
         const to = getBalance(guildId, toUserId);
-        
+
         const newFrom = from - amt;
         const newTo = to + amt;
         db.prepare(
           'INSERT INTO balances(user_id, balance, updated_at) VALUES(?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET balance = excluded.balance, updated_at = excluded.updated_at',
-        ).run(fromUserId, Number(newFrom), now);
+        ).run(fromUserId, bigintToDb(newFrom), now);
         db.prepare(
           'INSERT INTO balances(user_id, balance, updated_at) VALUES(?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET balance = excluded.balance, updated_at = excluded.updated_at',
-        ).run(toUserId, Number(newTo), now);
+        ).run(toUserId, bigintToDb(newTo), now);
         db.prepare(
           'INSERT INTO transactions(user_id, delta, reason, created_at) VALUES (?, ?, ?, ?)',
         ).run(fromUserId, Number(-amt), 'transfer:out', now);

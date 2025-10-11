@@ -13,7 +13,22 @@ let hasRegistered = false;
 function buildAllCommands() {
   const commands = allCommands();
   const deduped = commands.filter((c, i) => commands.findIndex(x => x.name === c.name) === i);
-  return deduped.map((b) => (typeof b.toJSON === 'function' ? b.toJSON() : b));
+  const jsonCommands = deduped.map((b) => (typeof b.toJSON === 'function' ? b.toJSON() : b));
+
+  // Log command visibility for verification
+  if (VERBOSE) {
+    for (const cmd of jsonCommands) {
+      const perms = (cmd as any).default_member_permissions;
+      console.log(JSON.stringify({
+        msg: 'command_visibility',
+        name: cmd.name,
+        defaultMemberPermissions: perms === null ? 'null (visible to all)' : perms,
+        dmPermission: (cmd as any).dm_permission ?? true
+      }));
+    }
+  }
+
+  return jsonCommands;
 }
 
 function assertToken(client: any): string {

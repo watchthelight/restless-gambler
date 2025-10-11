@@ -15,7 +15,11 @@ export async function getUserMeta(client: any, guildId: string | null, userId: s
   const db = getGuildDb(guildId);
   const row = db.prepare('SELECT display_name, avatar_url, updated_at FROM users WHERE user_id = ?').get(userId) as any;
   const now = Date.now();
-  if (row && now - (row.updated_at || 0) < 24 * 3600 * 1000) {
+  // Handle BigInt from better-sqlite3 safe integers for INTEGER columns
+  const updatedAt: number = row && row.updated_at != null
+    ? (typeof row.updated_at === 'bigint' ? Number(row.updated_at) : Number(row.updated_at))
+    : 0;
+  if (row && now - updatedAt < 24 * 3600 * 1000) {
     return { displayName: row.display_name || userId, avatarUrl: row.avatar_url || undefined };
   }
   let displayName = userId;

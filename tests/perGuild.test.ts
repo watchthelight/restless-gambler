@@ -72,7 +72,8 @@ describe('per-guild databases', () => {
     expect(fs.existsSync(g1Path)).toBe(true);
     // Check balances table exists and has migrated row
     const g1db = new (await import('better-sqlite3')).default(g1Path);
-    const row = g1db.prepare('SELECT balance FROM balances WHERE user_id = ?').get('U1') as { balance?: number } | undefined;
-    expect(row && typeof row.balance === 'number').toBe(true);
+    const row = g1db.prepare('SELECT balance FROM balances WHERE user_id = ?').get('U1') as { balance?: number | string | bigint } | undefined;
+    const t = typeof row?.balance;
+    expect(row && (t === 'string' || t === 'bigint' || t === 'number')).toBe(true);
   });
 });

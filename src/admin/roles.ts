@@ -3,6 +3,8 @@ import { generateCard } from '../ui/cardFactory.js';
 import { getGuildTheme } from '../ui/theme.js';
 import { themedEmbed } from '../ui/embeds.js';
 import { getGlobalAdminDb, getGuildDb } from '../db/connection.js';
+import { superAdminInsertSQL } from '../db/adminSchema.js';
+import { isAdminInGuild, addGuildAdmin as storeAddGuildAdmin, removeGuildAdmin as storeRemoveGuildAdmin } from './adminStore.js';
 
 export enum Role { BASE = 'BASE', ADMIN = 'ADMIN', SUPER = 'SUPER' }
 
@@ -16,8 +18,7 @@ export function isSuperAdmin(userId: string): boolean {
 
 export function isGuildAdmin(guildId: string, userId: string): boolean {
   const db = getGuildDb(guildId);
-  const row = db.prepare('SELECT 1 FROM guild_admins WHERE user_id = ?').get(userId) as any;
-  return !!row;
+  return isAdminInGuild(db, guildId, userId);
 }
 
 async function sendDenied(interaction: BaseInteraction) {
@@ -49,17 +50,19 @@ export async function requireSuper(interaction: BaseInteraction) {
 
 export function addGuildAdmin(guildId: string, uid: string): void {
   const db = getGuildDb(guildId);
-  db.prepare('INSERT INTO guild_admins(user_id, added_at) VALUES(?, strftime(\'%s\',\'now\')) ON CONFLICT(user_id) DO NOTHING').run(uid);
+  storeAddGuildAdmin(db, guildId, uid);
 }
 
 export function removeGuildAdmin(guildId: string, uid: string): void {
   const db = getGuildDb(guildId);
-  db.prepare('DELETE FROM guild_admins WHERE user_id = ?').run(uid);
+  storeRemoveGuildAdmin(db, guildId, uid);
 }
 
 export function seedSuperAdmin(uid: string) {
   const db = getGlobalAdminDb();
-  db.prepare('INSERT INTO super_admins(user_id, created_at) VALUES(?, strftime(\'%s\',\'now\')) ON CONFLICT(user_id) DO NOTHING').run(uid);
+  // Use superAdminInsertSQL to handle schema variations (created_at vs added_at)
+  const { sql } = superAdminInsertSQL(db);
+  db.prepare(sql).run(uid);
 }
 
 export function getRole(uid: string): Role {

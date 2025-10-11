@@ -1,10 +1,12 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction, AttachmentBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ButtonInteraction, REST, MessageFlags } from 'discord.js';
 import { spawn } from 'node:child_process';
-import { addGuildAdmin, audit, isSuperAdmin, removeGuildAdmin, requireAdmin, requireSuper } from '../../admin/roles.js';
+import { requireAdmin, requireSuper } from '../../admin/guard.js';
+import { makePublicAdmin } from '../util/adminBuilder.js';
+import { addAdmin as storeAddAdmin, removeAdmin as storeRemoveAdmin, listAdmins as storeListAdmins, getRole as storeGetRole, type AdminRole, addGuildAdmin, removeGuildAdmin, listAdminsForGuild } from '../../admin/adminStore.js';
 import { themedEmbed } from '../../ui/embeds.js';
 import { safeReply } from '../../interactions/reply.js';
 import { getGuildTheme } from '../../ui/theme.js';
-import { generateCard } from '../../ui/cardFactory.js';
+import { generateCard, buildCommandSyncCard } from '../../ui/cardFactory.js';
 import { getGuildDb, getGlobalAdminDb } from '../../db/connection.js';
 import { restartProcess } from '../../util/restart.js';
 import { respondOnce } from '../../util/interactions.js';
@@ -22,7 +24,12 @@ import { safeDefer } from '../../interactions/reply.js';
 import { isTestEnv } from '../../util/env.js';
 import log from '../../cli/logger.js';
 import { adminListEmbed } from './view.js';
+import { formatMentionInGuild } from '../../util/discord.js';
 import { listToggles, setToggle } from '../../config/toggles.js';
+import { isRateLimited, getRateLimitReset } from '../../util/ratelimit.js';
+import { auditLog, type AdminAuditEvent } from '../../util/audit.js';
+import { setWhitelistMode, releaseWhitelist } from '../../db/commandControl.js';
+import { jsonStringifySafeBigint } from '../../utils/json.js';
 
 export async function performReboot(): Promise<void> {
   // In tests, DO NOT schedule timers or exit the process.
@@ -51,13 +58,17 @@ export async function performReboot(): Promise<void> {
   }, 300);
 }
 
-export const data = new SlashCommandBuilder()
-  .setName('admin')
-  .setDescription('Admin controls')
-  .addSubcommand((s) => s.setName('add').setDescription('Add admin for this guild').addUserOption((o) => o.setName('user').setDescription('Target user').setRequired(true)))
-  .addSubcommand((s) => s.setName('super-add').setDescription('Add super admin (SUPER only)').addUserOption((o) => o.setName('user').setDescription('Target user').setRequired(true)))
-  .addSubcommand((s) => s.setName('remove').setDescription('Remove admin (SUPER only)').addStringOption((o) => o.setName('user').setDescription('User ID or mention').setRequired(true)))
-  .addSubcommand((s) => s.setName('list').setDescription('Show the super admin and current admins (visible to all)'))
+export const data = makePublicAdmin(
+  new SlashCommandBuilder()
+    .setName('admin')
+    .setDescription('Admin controls • v2')
+)
+  .addSubcommand((s) => s.setName('add').setDescription('Add ADMIN').addUserOption((o) => o.setName('user').setDescription('Target user').setRequired(true)))
+  .addSubcommand((s) => s.setName('promote').setDescription('Promote to SUPER').addUserOption((o) => o.setName('user').setDescription('Target user').setRequired(true)))
+  .addSubcommand((s) => s.setName('demote').setDescription('Demote to ADMIN').addUserOption((o) => o.setName('user').setDescription('Target user').setRequired(true)))
+  .addSubcommand((s) => s.setName('remove').setDescription('Remove guild admin').addUserOption((o) => o.setName('user').setDescription('Target user').setRequired(true)))
+  .addSubcommand((s) => s.setName('super-remove').setDescription('Remove super admin').addStringOption((o) => o.setName('user').setDescription('Target user ID or mention').setRequired(true)))
+  .addSubcommand((s) => s.setName('list').setDescription('List admins'))
   .addSubcommand((s) => s.setName('whoami').setDescription('Show your role'))
   .addSubcommand((s) => s.setName('reboot').setDescription('Reboot the bot (Admin+)'))
   .addSubcommand((s) =>
@@ -88,6 +99,9 @@ export const data = new SlashCommandBuilder()
   .addSubcommand((s) => s.setName('appinfo').setDescription('Show application info and global commands'))
   .addSubcommand((s) => s.setName('list-commands').setDescription('List global and guild-scoped commands'))
   .addSubcommand((s) => s.setName('force-purge').setDescription('Force purge guild-scoped commands across all guilds'))
+  .addSubcommand((s) => s.setName('whitelist').setDescription('Temporarily allow only one command in this guild')
+    .addStringOption(o => o.setName('command').setDescription('Command name').setRequired(true)))
+  .addSubcommand((s) => s.setName('whitelist-release').setDescription('Release whitelist mode (restore normal)'))
   .addSubcommand((s) =>
     s
       .setName('refresh-status')
@@ -134,14 +148,86 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   const sub = interaction.options.getSubcommandGroup(false) || interaction.options.getSubcommand(true);
   const subsub = interaction.options.getSubcommand(false);
   if (sub === 'add') {
-    await requireAdmin(interaction);
-    return runAdminAddNormal(interaction, { adminDb: getGlobalAdminDb(), guildDb: getGuildDb(interaction.guildId!), log });
+    await requireSuper(interaction);
+    const user = interaction.options.getUser('user', true);
+    const db = getGuildDb(interaction.guildId!);
+    const guildId = interaction.guildId!;
+    const res = addGuildAdmin(db, guildId, user.id);
+    if (res === 1) {
+      await interaction.reply({ content: `Added <@${user.id}> as guild admin.` });
+    } else {
+      await interaction.reply({ content: `No change; already guild admin.`, flags: MessageFlags.Ephemeral });
+    }
+    return;
+  }
+  else if (sub === 'promote') {
+    await requireSuper(interaction);
+    const user = interaction.options.getUser('user', true);
+    const db = getGuildDb(interaction.guildId!);
+    storeAddAdmin(db, user.id, 'SUPER');
+    await interaction.reply({ content: `Promoted <@${user.id}> to SUPER.`, flags: MessageFlags.Ephemeral });
+    return;
+  }
+  else if (sub === 'demote') {
+    await requireSuper(interaction);
+    const user = interaction.options.getUser('user', true);
+    const db = getGuildDb(interaction.guildId!);
+    storeAddAdmin(db, user.id, 'ADMIN');
+    await interaction.reply({ content: `Demoted <@${user.id}> to ADMIN.`, flags: MessageFlags.Ephemeral });
+    return;
+  }
+  else if (sub === 'remove') {
+    await requireSuper(interaction);
+    const user = interaction.options.getUser('user', true);
+    const db = getGuildDb(interaction.guildId!);
+    const guildId = interaction.guildId!;
+    const changes = removeGuildAdmin(db, guildId, user.id);
+    if (changes > 0) {
+      await interaction.reply({ content: `Removed <@${user.id}> from guild admins.` });
+    } else {
+      await interaction.reply({ content: `No change; not a guild admin.`, flags: MessageFlags.Ephemeral });
+    }
+    return;
   }
   else if (sub === 'give') {
     await requireAdmin(interaction);
+
+    // Rate limit check
+    if (isRateLimited(interaction.user.id, 'admin:give')) {
+      const resetMs = getRateLimitReset(interaction.user.id, 'admin:give');
+      const resetSec = Math.ceil(resetMs / 1000);
+      await interaction.reply({
+        content: `Rate limit exceeded. Try again in ${resetSec} second${resetSec !== 1 ? 's' : ''}.`,
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
     const user = interaction.options.getUser('user', true);
-    const amount = interaction.options.getInteger('amount', true);
+    let amount = interaction.options.getInteger('amount', true);
     if (amount <= 0) { await interaction.reply({ content: 'Amount must be positive.' }); return; }
+
+    // Clamp to max grant amount (default 1B)
+    const MAX_GRANT = parseInt(process.env.ADMIN_MAX_GRANT || '1000000000', 10);
+    if (amount > MAX_GRANT) {
+      amount = MAX_GRANT;
+      await interaction.reply({
+        content: `Amount clamped to maximum grant of ${formatBolts(MAX_GRANT)}.`,
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
+    // Audit log
+    auditLog({
+      action: 'admin_give',
+      adminUserId: interaction.user.id,
+      targetUserId: user.id,
+      amount,
+      timestamp: Date.now(),
+      guildId: interaction.guildId!,
+    });
+
     const { getBalance, adjustBalance } = await import('../../economy/wallet.js');
     const current = getBalance(interaction.guildId!, user.id);
     // ensure user exists even if current=0
@@ -152,13 +238,33 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const pretty = formatBalance(newBal);
     const exact = formatExact(newBal);
     const embed = walletEmbed({ title: 'Funds Added', headline: `${user.tag} +${formatBolts(amount)}. New balance:`, pretty, exact });
-    console.log(JSON.stringify({ msg: 'admin_action', action: 'give', target: user.id, amount: amount, admin: interaction.user.id }));
+    console.log(JSON.stringify({ msg: 'admin_action', action: 'give', target: user.id, amount: amount, admin: interaction.user.id, guildId: interaction.guildId }));
     await interaction.editReply({ embeds: [embed], components: [] });
+  }
+  else if (sub === 'whitelist') {
+    await requireAdmin(interaction);
+    const cmd = interaction.options.getString('command', true).toLowerCase();
+    const snapshot: string[] = (interaction.client as any)?.commands ? [...(interaction.client as any).commands.keys()] : [];
+    setWhitelistMode(getGuildDb(interaction.guildId!), interaction.guildId!, [cmd], snapshot);
+    const audit = { msg: 'admin_whitelist', guildId: interaction.guildId, admin: interaction.user.id, allow: cmd, snapshot };
+    const adb = getGlobalAdminDb();
+    adb.prepare('INSERT INTO admin_audit(actor_uid, action, target_uid, details, created_at) VALUES(?,?,?,?,?)')
+      .run(interaction.user.id, 'admin_whitelist', interaction.guildId!, jsonStringifySafeBigint(audit), Date.now());
+    return interaction.reply({ content: `Whitelist mode active for \`${cmd}\`. All other commands are blocked.`, flags: MessageFlags.Ephemeral });
+  }
+  else if (sub === 'whitelist-release') {
+    await requireAdmin(interaction);
+    releaseWhitelist(getGuildDb(interaction.guildId!), interaction.guildId!);
+    const audit = { msg: 'admin_whitelist_release', guildId: interaction.guildId, admin: interaction.user.id };
+    const adb = getGlobalAdminDb();
+    adb.prepare('INSERT INTO admin_audit(actor_uid, action, target_uid, details, created_at) VALUES(?,?,?,?,?)')
+      .run(interaction.user.id, 'admin_whitelist_release', interaction.guildId!, jsonStringifySafeBigint(audit), Date.now());
+    return interaction.reply({ content: 'Whitelist mode released. Normal operation restored.', flags: MessageFlags.Ephemeral });
   }
   else if (sub === 'super-add') {
     return runAdminAddSuper(interaction, { adminDb: getGlobalAdminDb(), guildDb: getGuildDb(interaction.guildId!), log });
   }
-  else if (sub === 'remove') {
+  else if (sub === 'super-remove') {
     await requireSuper(interaction);
     const input = interaction.options.getString('user', true);
     const userId = extractUserId(input);
@@ -178,7 +284,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     try {
       const adminDb = getGlobalAdminDb();
       adminDb.prepare('DELETE FROM super_admins WHERE user_id = ?').run(userId);
-      audit(interaction.user.id, 'admin_remove', userId);
+      auditLog({ action: 'admin_remove', adminUserId: interaction.user.id, targetUserId: userId, timestamp: Date.now(), guildId: interaction.guildId! });
       const theme = getGuildTheme(interaction.guildId);
       const embed = themedEmbed(theme, 'Super Admin Removed', `<@${userId}>`);
       await interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [embed] });
@@ -189,29 +295,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   } else if (sub === 'list') {
     // Public: visible to everyone. Use defer+edit to avoid duplicate reply.
     await safeDefer(interaction, { ephemeral: false });
-    const adminDb = getGlobalAdminDb();
     const db = getGuildDb(interaction.guildId!);
-
-    const superRow = adminDb.prepare(`
-      SELECT user_id, COALESCE(created_at, added_at) AS created_at
-      FROM super_admins
-      ORDER BY COALESCE(created_at, added_at) DESC
-      LIMIT 1
-    `).get() as { user_id: string; created_at: number } | undefined;
-    const superId = superRow?.user_id || '(none)';
-
-    const rows = db.prepare(`
-      SELECT user_id, added_at
-      FROM guild_admins
-      ORDER BY added_at DESC
-    `).all() as { user_id: string; added_at: number }[];
-
-    const admins = rows.map(r => ({ userId: r.user_id, addedAt: Number(r.added_at) * 1000 }));
-    const resolveMention = (uid: string) => `<@${uid}>`;
-    const embed = adminListEmbed({ superId, admins, resolveMention });
+    const { superIds, adminIds } = listAdminsForGuild(db, interaction.guildId!);
+    const guild = interaction.guild!;
+    const resolveMention = (uid: string) => formatMentionInGuild(guild, uid);
+    const embed = adminListEmbed({ guild, superIds, adminIds, resolveMention });
     await interaction.editReply({ embeds: [embed], components: [] });
   } else if (sub === 'whoami') {
-    const role = isSuperAdmin(interaction.user.id) ? 'SUPER' : 'ADMIN';
+    const db = getGuildDb(interaction.guildId!);
+    const r = storeGetRole(db, interaction.user.id) || 'ADMIN';
+    const role = r;
     const theme = getGuildTheme(interaction.guildId);
     const card = await generateCard({ layout: 'Notice', theme, payload: { title: 'Role', message: `You are ${role}.` } });
     const file = new AttachmentBuilder(card.buffer, { name: card.filename });
@@ -239,14 +332,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     try {
       const rest = new REST({ version: "10" }).setToken(process.env.BOT_TOKEN!);
       const result = await syncAll(rest, interaction.client, log);
-      const purgedLine = result.purged.map(p => `${p.guildId}(${p.count})`).join(", ") || "none";
-      await interaction.editReply({
-        content: [
-          "command sync complete",
-          `global: ${result.globalCount}`,
-          `purged per-guild: ${purgedLine}`
-        ].join("\n")
-      });
+      const theme = getGuildTheme(interaction.guildId);
+      const card = await buildCommandSyncCard(result, theme);
+      const file = new AttachmentBuilder(card.buffer, { name: card.filename });
+      const embed = themedEmbed(theme, 'Command Sync', '').setImage(`attachment://${card.filename}`);
+      await interaction.editReply({ embeds: [embed], files: [file] });
     } catch (e: any) {
       log.error("admin_sync_error", "register", { err: String(e) });
       await interaction.editReply("Sync failed (ERR-REGISTRAR).").catch(() => { });
@@ -301,23 +391,60 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // Admin economy controls
   else if (sub === 'take') {
     await requireAdmin(interaction);
+
+    // Rate limit check
+    if (isRateLimited(interaction.user.id, 'admin:take')) {
+      const resetMs = getRateLimitReset(interaction.user.id, 'admin:take');
+      const resetSec = Math.ceil(resetMs / 1000);
+      await interaction.reply({
+        content: `Rate limit exceeded. Try again in ${resetSec} second${resetSec !== 1 ? 's' : ''}.`,
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
     const user = interaction.options.getUser('user', true);
-    const amount = interaction.options.getInteger('amount', true);
+    let amount = interaction.options.getInteger('amount', true);
     if (amount <= 0) { await interaction.reply({ content: 'Amount must be positive.' }); return; }
+
+    // Clamp to max grant amount
+    const MAX_GRANT = parseInt(process.env.ADMIN_MAX_GRANT || '1000000000', 10);
+    if (amount > MAX_GRANT) {
+      amount = MAX_GRANT;
+      await interaction.reply({
+        content: `Amount clamped to maximum of ${formatBolts(MAX_GRANT)}.`,
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
     const { getBalance, adjustBalance } = await import('../../economy/wallet.js');
     const current = getBalance(interaction.guildId!, user.id);
-    const delta = -Math.min(amount, Number(current));
+    const want = BigInt(Math.trunc(amount));
+    const take = current < want ? current : want;
+    const delta = -Number(take);
+    const actualTaken = Number(take);
+
+    // Audit log
+    auditLog({
+      action: 'admin_take',
+      adminUserId: interaction.user.id,
+      targetUserId: user.id,
+      amount: actualTaken,
+      timestamp: Date.now(),
+      guildId: interaction.guildId!,
+    });
+
     // ensure user exists even if current=0
     const { getUserMeta } = await import('../../util/userMeta.js');
     await getUserMeta(interaction.client, interaction.guildId!, user.id);
-    const newBal = await adjustBalance(interaction.guildId!, user.id, delta, 'admin:take');
-    const actualTaken = -delta;
+    const newBal = await adjustBalance(interaction.guildId!, user.id, -take, 'admin:take');
     await safeDefer(interaction);
     const pretty = formatBalance(newBal);
     const exact = formatExact(newBal);
     const takenText = formatBolts(actualTaken);
     const embed = walletEmbed({ title: 'Funds Removed', headline: `${user.tag} -${takenText}. New balance:`, pretty, exact });
-    console.log(JSON.stringify({ msg: 'admin_action', action: 'take', target: user.id, amount: actualTaken, admin: interaction.user.id }));
+    console.log(JSON.stringify({ msg: 'admin_action', action: 'take', target: user.id, amount: actualTaken, admin: interaction.user.id, guildId: interaction.guildId }));
     await interaction.editReply({ embeds: [embed], components: [] });
   }
   else if (sub === 'toggles') {
@@ -347,15 +474,38 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
   else if (sub === 'reset') {
     await requireAdmin(interaction);
+
+    // Rate limit check
+    if (isRateLimited(interaction.user.id, 'admin:reset')) {
+      const resetMs = getRateLimitReset(interaction.user.id, 'admin:reset');
+      const resetSec = Math.ceil(resetMs / 1000);
+      await interaction.reply({
+        content: `Rate limit exceeded. Try again in ${resetSec} second${resetSec !== 1 ? 's' : ''}.`,
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
     const user = interaction.options.getUser('user', true);
+
+    // Audit log
+    auditLog({
+      action: 'admin_reset',
+      adminUserId: interaction.user.id,
+      targetUserId: user.id,
+      amount: 0,
+      timestamp: Date.now(),
+      guildId: interaction.guildId!,
+    });
+
     const db = getGuildDb(interaction.guildId!);
     const now = Date.now();
     const tx = db.transaction(() => {
-      const row = db.prepare('SELECT balance FROM balances WHERE user_id = ?').get(user.id) as { balance?: number } | undefined;
-      const cur = row?.balance ?? 0;
-      // set balance to 0
-      db.prepare('INSERT INTO balances(user_id, balance, updated_at) VALUES(?, 0, ?) ON CONFLICT(user_id) DO UPDATE SET balance=0, updated_at=excluded.updated_at').run(user.id, now);
-      if (cur !== 0) db.prepare('INSERT INTO transactions(user_id, delta, reason, created_at) VALUES (?,?,?,?)').run(user.id, -cur, 'admin:reset', now);
+      const row = db.prepare('SELECT balance FROM balances WHERE user_id = ?').get(user.id) as { balance?: number | string | bigint } | undefined;
+      const cur = row?.balance != null ? (typeof row.balance === 'bigint' ? row.balance : BigInt(Math.trunc(Number(row.balance)))) : 0n;
+      // set balance to 0 (TEXT)
+      db.prepare('INSERT INTO balances(user_id, balance, updated_at) VALUES(?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET balance=excluded.balance, updated_at=excluded.updated_at').run(user.id, '0', now);
+      if (cur !== 0n) db.prepare('INSERT INTO transactions(user_id, delta, reason, created_at) VALUES (?,?,?,?)').run(user.id, Number(-cur), 'admin:reset', now);
       // no dedicated wins/losses columns; leave game history intact
     });
     tx();
@@ -363,7 +513,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const pretty = formatBalance(0);
     const exact = formatExact(0);
     const embed = walletEmbed({ title: 'Account Reset', headline: `${user.tag} reset. New balance:`, pretty, exact });
-    console.log(JSON.stringify({ msg: 'admin_action', action: 'reset', target: user.id, amount: 0, admin: interaction.user.id }));
+    console.log(JSON.stringify({ msg: 'admin_action', action: 'reset', target: user.id, amount: 0, admin: interaction.user.id, guildId: interaction.guildId }));
     await interaction.editReply({ embeds: [embed], components: [] });
   }
   else if (sub === 'refresh-status') {

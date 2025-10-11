@@ -2,10 +2,13 @@ import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionsBitField, 
 import { themedEmbed } from '../ui/embeds.js';
 import { getGuildTheme } from '../ui/theme.js';
 import { generateCard } from '../ui/cardFactory.js';
+import { makePublicAdmin } from './util/adminBuilder.js';
 
-export const data = new SlashCommandBuilder()
-  .setName('dev')
-  .setDescription('Developer tools')
+export const data = makePublicAdmin(
+  new SlashCommandBuilder()
+    .setName('dev')
+    .setDescription('Developer tools • v2')
+)
   .addSubcommand((sc) => sc.setName('demo').setDescription('Render a demo card').addStringOption((o) => o.setName('component').setRequired(true).setDescription('Component: notice|list|wallet|slots|roulette|blackjack')));
 
 export async function execute(interaction: ChatInputCommandInteraction) {

@@ -13,6 +13,10 @@ import { renderAmountInline } from '../../util/amountRender.js';
 import { getGuildDb } from '../../db/connection.js';
 import { safeReply } from '../../interactions/reply.js';
 import { withLock } from '../../util/locks.js';
+import { withUserLuck } from '../../rng/luck.js';
+import { onGambleXP } from '../../rank/xpEngine.js';
+import { getSetting } from '../../db/kv.js';
+import { rememberUserChannel } from '../../rank/announce.js';
 
 export async function handleSlotsButton(interaction: ButtonInteraction) {
   const [prefix, action, userId, betStr] = interaction.customId.split(':');
@@ -23,8 +27,9 @@ export async function handleSlotsButton(interaction: ButtonInteraction) {
   }
   const bet = parseInt(betStr, 10);
   if (!interaction.guildId) { await safeReply(interaction, { content: 'This bot only works in servers.', flags: MessageFlags.Ephemeral }); return; }
+  rememberUserChannel(interaction.guildId, interaction.user.id, interaction.channelId);
   const current = getBalance(interaction.guildId, userId);
-  if (current < bet) {
+  if (current < BigInt(bet)) {
     const db = getGuildDb(interaction.guildId);
     const mode = uiExactMode(db, "guild");
     const sig = uiSigFigs(db);
@@ -37,7 +42,10 @@ export async function handleSlotsButton(interaction: ButtonInteraction) {
   }
   await withLock(`slots:${interaction.message?.id || interaction.id}`, async () => {
     await interaction.deferUpdate().catch(() => { });
-    const result = spin(bet, defaultConfig, cryptoRNG);
+    const db = getGuildDb(interaction.guildId!);
+    const ranksEnabled = (getSetting(db, 'features.ranks.enabled') !== 'false');
+    const rng = (max: number) => Math.floor(((ranksEnabled ? withUserLuck(interaction.guildId!, userId, () => Math.random()) : Math.random())) * max);
+    const result = spin(bet, defaultConfig, rng);
     const net = result.payout - bet;
     await adjustBalance(interaction.guildId!, userId, -bet, 'slots:bet');
     if (result.payout > 0) await adjustBalance(interaction.guildId!, userId, result.payout, 'slots:win');
@@ -50,7 +58,6 @@ export async function handleSlotsButton(interaction: ButtonInteraction) {
     });
     const file = new AttachmentBuilder(card.buffer, { name: card.filename });
     const headline = net > 0 ? outcomeMessage('win', net) : net < 0 ? outcomeMessage('loss', Math.abs(net)) : outcomeMessage('push');
-    const db = getGuildDb(interaction.guildId!);
     const mode = uiExactMode(db, "guild");
     const sig = uiSigFigs(db);
     const balText = mode === "inline" ? renderAmountInline(newBal, sig) : formatBolt(newBal);
@@ -58,6 +65,8 @@ export async function handleSlotsButton(interaction: ButtonInteraction) {
 New balance: ${balText}`).setImage(
       `attachment://${card.filename}`,
     );
+    // XP grant once per completed round
+    try { if (ranksEnabled) onGambleXP(interaction.guildId!, userId, bet, Number(newBal)); } catch { }
     await interaction.editReply({ embeds: [embed], files: [file], components: [] }).catch(() => { });
   });
 }

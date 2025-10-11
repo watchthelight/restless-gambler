@@ -4,10 +4,10 @@ import { adjustBalance, getBalance } from "../../economy/wallet.js";
 export type HoldemTable = {
   id: number;
   channel_id: string;
-  small_blind: number;
-  big_blind: number;
-  min_buyin: number;
-  max_buyin: number;
+  small_blind: number | bigint;
+  big_blind: number | bigint;
+  min_buyin: number | bigint; // bigint when db.defaultSafeIntegers(true)
+  max_buyin: number | bigint;
   seats: number;
   created_at: number;
 };
@@ -16,7 +16,7 @@ export type HoldemPlayer = {
   table_id: number;
   user_id: string;
   seat: number;
-  stack: number;
+  stack: number | bigint; // bigint when db.defaultSafeIntegers(true)
   joined_at: number;
 };
 
@@ -33,10 +33,12 @@ export function getTableInChannel(guildId: string, channelId: string): HoldemTab
 export function createTableInChannel(guildId: string, channelId: string, opts: Partial<Pick<HoldemTable,
   "small_blind" | "big_blind" | "min_buyin" | "max_buyin" | "seats">> = {}): HoldemTable {
   const now = Date.now();
-  const sb = Math.max(1, opts.small_blind ?? 5);
-  const bb = Math.max(sb, opts.big_blind ?? sb * 2);
-  const min = Math.max(bb * 2, opts.min_buyin ?? bb * 20);
-  const max = Math.max(min, opts.max_buyin ?? bb * 100);
+  // Convert bigint to number for Math operations
+  const toNum = (v: number | bigint | undefined, def: number) => v !== undefined ? Number(v) : def;
+  const sb = Math.max(1, toNum(opts.small_blind, 5));
+  const bb = Math.max(sb, toNum(opts.big_blind, sb * 2));
+  const min = Math.max(bb * 2, toNum(opts.min_buyin, bb * 20));
+  const max = Math.max(min, toNum(opts.max_buyin, bb * 100));
   const seats = Math.min(10, Math.max(2, opts.seats ?? 6));
 
   const db = getGuildDb(guildId);
@@ -76,7 +78,11 @@ export async function joinTable(guildId: string, tableId: number, userId: string
   const table = getTableById(guildId, tableId);
   if (!table) throw new Error("table_not_found");
   if (isUserSeatedAnywhere(guildId, userId)) throw new Error("already_seated");
-  if (buyin < table.min_buyin || buyin > table.max_buyin) throw new Error("buyin_out_of_range");
+
+  // Handle bigint comparisons (table values may be bigint from db.defaultSafeIntegers)
+  const minBuyin = typeof table.min_buyin === 'bigint' ? Number(table.min_buyin) : table.min_buyin;
+  const maxBuyin = typeof table.max_buyin === 'bigint' ? Number(table.max_buyin) : table.max_buyin;
+  if (buyin < minBuyin || buyin > maxBuyin) throw new Error("buyin_out_of_range");
 
   const bal = getBalance(guildId, userId);
   if (bal < BigInt(buyin)) throw new Error("insufficient_funds");
@@ -100,9 +106,9 @@ export async function leaveAnyTable(guildId: string, userId: string) {
   const row = db.prepare("SELECT table_id, stack FROM holdem_players WHERE user_id = ? LIMIT 1").get(userId) as any;
   if (!row) return null;
   const tableId = Number(row.table_id);
-  const stack = Number(row.stack);
+  const stack = row.stack; // Keep as-is (bigint from db with defaultSafeIntegers)
   db.prepare("DELETE FROM holdem_players WHERE user_id = ?").run(userId);
-  await adjustBalance(guildId, userId, stack, "holdem_cashout");
+  await adjustBalance(guildId, userId, typeof stack === 'bigint' ? Number(stack) : stack, "holdem_cashout");
   return { table: getTableById(guildId, tableId)!, stack };
 }
 

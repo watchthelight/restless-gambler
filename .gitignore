@@ -6,7 +6,7 @@ data/
 backups/
 admin.db
 data.db
-
+CONFIG_BIG_INT_IMPLEMENTATION.md
 node_modules/
 
 .env

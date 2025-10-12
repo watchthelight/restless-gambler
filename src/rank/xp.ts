@@ -1,6 +1,6 @@
 /**
  * Game XP Award Service
- * Provides display-friendly XP grant information for game results
+ * Calculates XP rewards from gambling activities with rate limiting and anti-spam measures
  */
 
 import { getGuildDb } from "../db/connection.js";
@@ -9,7 +9,6 @@ import { addXP, grantLuck, getLuckBps, getLuckBuff } from "./store.js";
 import { queueRankUpAnnouncement } from "./announce.js";
 import { refreshPresence } from "../status/presence.js";
 import { getClient } from "../bot/client.js";
-import { bigintToNumberSafe } from "../utils/bigint.js";
 
 export type GameType = 'blackjack' | 'roulette' | 'slots' | 'holdem' | 'gamble';
 
@@ -22,16 +21,20 @@ export type XpGrant = {
   reason: string;      // e.g., "blackjack hand", "roulette spin"
   newLevel?: number;   // present if level changed after this grant
   buffExpiresAt?: string; // ISO if a fresh rank-up extended/created a buff
+  clampedToMin?: boolean;
+  clampedToMax?: boolean;
 };
 
-// In-memory rate limiting: per-user per-guild XP tracking
-interface RateLimitWindow {
-  sum: number;
-  windowStart: number;
-  lastActionTime: number;
+// In-memory rate limiting: per-user per-guild XP tracking with minute bucketing
+interface RateLimitBucket {
+  minuteKey: number;    // Math.floor(Date.now() / 60000)
+  xp: number;           // XP granted in this minute
+  lastGrantMs: number;  // Timestamp of last grant
 }
 
-const rateLimits = new Map<string, RateLimitWindow>();
+const minuteBuckets = new Map<string, RateLimitBucket>();
+
+const keyFor = (guildId: string, userId: string) => `${guildId}:${userId}`;
 
 /**
  * Get guild XP configuration
@@ -41,11 +44,11 @@ function getXpConfig(guildId: string) {
   return {
     xp_enabled: getSetting(db, "xp_enabled") !== "false", // default true
     xp_per_1000_wagered: getSettingNum(db, "xp_per_1000_wagered", 5),
-    xp_flat_per_round: getSettingNum(db, "xp_flat_per_round", 1),
-    xp_min_per_round: getSettingNum(db, "xp_min_per_round", 1),
+    xp_flat_per_round: getSettingNum(db, "xp_flat_per_round", 0),
+    xp_min_per_round: getSettingNum(db, "xp_min_per_round", 10),
     xp_max_per_round: getSettingNum(db, "xp_max_per_round", 250),
-    xp_cap_per_minute: getSettingNum(db, "xp_cap_per_minute", 500),
-    xp_cooldown_ms: getSettingNum(db, "xp_cooldown_ms", 1500),
+    xp_per_minute_cap: getSettingNum(db, "xp_per_minute_cap", 1000),
+    xp_min_cooldown_ms: getSettingNum(db, "xp_min_cooldown_ms", 1500),
     luck_bonus_bps: getSettingNum(db, "luck_bonus_bps", 150),
     luck_max_bps: getSettingNum(db, "luck_max_bps", 300),
     luck_duration_sec: getSettingNum(db, "luck_duration_sec", 3600),
@@ -54,23 +57,30 @@ function getXpConfig(guildId: string) {
 }
 
 /**
- * Calculate base XP from wager and rounds
+ * Get current XP rate limit status for a user
  */
-function calculateBaseXp(opts: { wager?: bigint; rounds?: number }, cfg: ReturnType<typeof getXpConfig>): number {
-  const wager = opts.wager ?? 0n;
-  const rounds = opts.rounds ?? 1;
+export function getXpRateLimitStatus(guildId: string, userId: string): {
+  xpThisMinute: number;
+  minuteKey: number;
+  lastGrantMs: number;
+} {
+  const key = keyFor(guildId, userId);
+  const bucket = minuteBuckets.get(key);
+  const minuteKey = Math.floor(Date.now() / 60000);
 
-  // Convert wager to number safely
-  const wagerNum = wager > 0n ? bigintToNumberSafe(wager) : 0;
+  if (!bucket || bucket.minuteKey !== minuteKey) {
+    return {
+      xpThisMinute: 0,
+      minuteKey,
+      lastGrantMs: bucket?.lastGrantMs ?? 0
+    };
+  }
 
-  // Proportional award: xp_per_1000_wagered per 1000 units wagered
-  const wagerXp = (wagerNum / 1000) * cfg.xp_per_1000_wagered;
-
-  // Flat award per round
-  const flatXp = cfg.xp_flat_per_round * rounds;
-
-  // Total base XP (before clamps)
-  return wagerXp + flatXp;
+  return {
+    xpThisMinute: bucket.xp,
+    minuteKey,
+    lastGrantMs: bucket.lastGrantMs
+  };
 }
 
 /**
@@ -78,15 +88,21 @@ function calculateBaseXp(opts: { wager?: bigint; rounds?: number }, cfg: ReturnT
  *
  * @param guildId - Guild ID
  * @param userId - User ID
- * @param opts - Game options (wager, game type, rounds)
+ * @param opts - Game options (wager, game type, rounds, reason)
  * @returns XpGrant with all information needed for UI display
  */
 export async function awardGameXp(
   guildId: string,
   userId: string,
-  opts: { wager?: bigint; game: GameType; rounds?: number }
+  opts: {
+    wager?: bigint | number | string;
+    game?: GameType;
+    rounds?: number;
+    reason?: string;
+  }
 ): Promise<XpGrant> {
   const cfg = getXpConfig(guildId);
+  const reason = opts.reason ?? (opts.game ? gameReason(opts.game) : 'game round');
 
   // Check if XP is enabled
   if (!cfg.xp_enabled) {
@@ -96,117 +112,139 @@ export async function awardGameXp(
       base: 0,
       buffPct: 0,
       final: 0,
-      reason: gameReason(opts.game),
+      reason: 'xp disabled',
     };
   }
 
-  // Calculate base XP
-  let baseXp = calculateBaseXp(opts, cfg);
-
-  // If both wager is 0 and flat is 0, grant nothing
-  const wager = opts.wager ?? 0n;
-  if (wager === 0n && cfg.xp_flat_per_round === 0) {
-    return {
-      userId,
-      guildId,
-      base: 0,
-      buffPct: 0,
-      final: 0,
-      reason: gameReason(opts.game),
-    };
-  }
-
-  // Apply per-round min/max clamps
-  baseXp = Math.max(cfg.xp_min_per_round, Math.min(cfg.xp_max_per_round, Math.floor(baseXp)));
-
-  // Check rate limits
-  const key = `${guildId}:${userId}`;
-  const now = Date.now();
-  const limit = rateLimits.get(key) ?? { sum: 0, windowStart: now, lastActionTime: 0 };
-
-  // Cooldown check
-  if (now - limit.lastActionTime < cfg.xp_cooldown_ms) {
-    return {
-      userId,
-      guildId,
-      base: baseXp,
-      buffPct: 0,
-      final: 0,
-      reason: gameReason(opts.game),
-    };
-  }
-
-  // Reset window if 60 seconds have passed
-  if (now - limit.windowStart >= 60_000) {
-    limit.sum = 0;
-    limit.windowStart = now;
-  }
-
-  // Apply per-minute rate limit
-  const allowed = Math.max(0, cfg.xp_cap_per_minute - limit.sum);
-  let grantedXp = Math.min(baseXp, allowed);
-
-  // Get current luck buff (before applying XP)
-  const currentLuckBps = getLuckBps(guildId, userId);
-  const buffPct = currentLuckBps / 10000; // Convert basis points to decimal
-
-  // Apply luck buff to XP
-  if (buffPct > 0 && grantedXp > 0) {
-    const buffedXp = Math.floor(grantedXp * (1 + buffPct));
-    grantedXp = Math.min(buffedXp, cfg.xp_max_per_round); // Re-clamp after buff
-  }
-
-  // Update rate limit tracking
-  limit.sum += grantedXp;
-  limit.lastActionTime = now;
-  rateLimits.set(key, limit);
-
-  // If no XP granted after all checks, return early
-  if (grantedXp <= 0) {
-    return {
-      userId,
-      guildId,
-      base: baseXp,
-      buffPct,
-      final: 0,
-      reason: gameReason(opts.game),
-    };
-  }
-
-  // Persist XP and check for level-up
-  const { level, leveled, previousLevel } = addXP(guildId, userId, grantedXp);
-
-  // Handle rank-up
-  let buffExpiresAt: string | undefined;
-  if (leveled) {
-    const luck = Math.min(cfg.luck_bonus_bps, cfg.luck_max_bps);
-    const dur = cfg.luck_duration_sec;
-    grantLuck(guildId, userId, luck, dur);
-
-    // Get new buff expiry
-    const buff = getLuckBuff(guildId, userId);
-    if (buff) {
-      buffExpiresAt = new Date(buff.expires_at).toISOString();
+  // Parse wager safely to number
+  const rounds = Math.max(1, Number(opts.rounds ?? 1));
+  let wagerNum = 0;
+  if (opts.wager !== undefined && opts.wager !== null) {
+    try {
+      const wagerBigInt = BigInt(String(opts.wager));
+      wagerNum = Number(wagerBigInt);
+    } catch {
+      wagerNum = 0;
     }
+  }
 
-    // Fire-and-forget presence refresh
-    try { refreshPresence(getClient()).catch(() => {}); } catch { }
+  // Calculate base XP per round
+  const perK = Number(cfg.xp_per_1000_wagered);
+  const flat = Number(cfg.xp_flat_per_round);
+  const basePerRound = Math.max(0, Math.floor((wagerNum / 1000) * perK) + flat);
+  let base = basePerRound * rounds;
 
-    // Queue rank-up announcement
-    if (cfg.rank_public_promotions) {
-      try { queueRankUpAnnouncement(guildId, userId, level, luck, dur); } catch { }
+  // Cooldown enforcement
+  const now = Date.now();
+  const key = keyFor(guildId, userId);
+  const minuteKey = Math.floor(now / 60000);
+
+  let bucket = minuteBuckets.get(key);
+  if (!bucket || bucket.minuteKey !== minuteKey) {
+    // New minute bucket
+    bucket = { minuteKey, xp: 0, lastGrantMs: 0 };
+    minuteBuckets.set(key, bucket);
+  }
+
+  // Check cooldown
+  if (bucket.lastGrantMs && now - bucket.lastGrantMs < cfg.xp_min_cooldown_ms) {
+    bucket.lastGrantMs = now; // Update timestamp even when throttled
+    return {
+      userId,
+      guildId,
+      base,
+      buffPct: 0,
+      final: 0,
+      reason: 'cooldown',
+    };
+  }
+
+  // Get luck buff
+  const currentLuckBps = getLuckBps(guildId, userId);
+  const buffPct = currentLuckBps / 10000; // Convert basis points to decimal (e.g., 150 -> 0.015)
+
+  // Apply buff to base
+  let withBuff = Math.floor(base * (1 + buffPct));
+
+  // Apply clamps (only if base is non-zero OR flat is non-zero)
+  const minRound = Number(cfg.xp_min_per_round);
+  const maxRound = Number(cfg.xp_max_per_round);
+
+  let clampedToMin = false;
+  let clampedToMax = false;
+
+  // Only apply min clamp if we have a non-zero wager OR flat rate
+  // Per spec: "unless base + flat == 0 then still enforce min if min>0"
+  // This means: if wager > 0 OR flat > 0, apply min clamp
+  if (wagerNum > 0 || flat > 0) {
+    if (withBuff < minRound) {
+      withBuff = minRound;
+      clampedToMin = true;
+    }
+  }
+
+  if (withBuff > maxRound) {
+    withBuff = maxRound;
+    clampedToMax = true;
+  }
+
+  // Apply per-minute cap
+  const perMinuteCap = Number(cfg.xp_per_minute_cap);
+  const remaining = Math.max(0, perMinuteCap - bucket.xp);
+  const final = Math.max(0, Math.min(withBuff, remaining));
+
+  // Update bucket state
+  bucket.lastGrantMs = now;
+  if (final > 0) {
+    bucket.xp += final;
+  }
+
+  // Persist XP if final > 0
+  let buffExpiresAt: string | undefined;
+  let newLevel: number | undefined;
+
+  if (final > 0) {
+    const { level, leveled, previousLevel } = addXP(guildId, userId, final);
+
+    // Handle rank-up
+    if (leveled) {
+      const luck = Math.min(cfg.luck_bonus_bps, cfg.luck_max_bps);
+      const dur = cfg.luck_duration_sec;
+      grantLuck(guildId, userId, luck, dur);
+
+      // Get new buff expiry
+      const buff = getLuckBuff(guildId, userId);
+      if (buff) {
+        // expires_at is a BigInt (Unix ms), convert to number for Date constructor
+        const expiresMs = Number(buff.expires_at);
+        buffExpiresAt = new Date(expiresMs).toISOString();
+      }
+
+      newLevel = level;
+
+      // Fire-and-forget presence refresh (only if not in test env)
+      if (process.env.NODE_ENV !== 'test') {
+        try { refreshPresence(getClient()).catch(() => {}); } catch { }
+      }
+
+      // Queue rank-up announcement
+      if (cfg.rank_public_promotions) {
+        try { queueRankUpAnnouncement(guildId, userId, level, luck, dur); } catch { }
+      }
     }
   }
 
   return {
     userId,
     guildId,
-    base: baseXp,
+    base,
     buffPct,
-    final: grantedXp,
-    reason: gameReason(opts.game),
-    newLevel: leveled ? level : undefined,
+    final,
+    reason,
+    newLevel,
     buffExpiresAt,
+    clampedToMin,
+    clampedToMax,
   };
 }
 
@@ -228,48 +266,12 @@ function gameReason(game: GameType): string {
  * Clean up old rate limit entries (call periodically)
  */
 export function cleanupXpRateLimits(): void {
-  const now = Date.now();
-  const staleThreshold = 5 * 60 * 1000; // 5 minutes
-
-  for (const [key, limit] of rateLimits.entries()) {
-    if (now - limit.windowStart > staleThreshold) {
-      rateLimits.delete(key);
-    }
-  }
+  minuteBuckets.clear();
 }
 
 /**
- * Get current XP rate limit status for a user (for debugging/admin)
+ * Shutdown any background schedulers (for clean Jest exit)
  */
-export function getXpRateLimitStatus(guildId: string, userId: string): {
-  xpThisMinute: number;
-  xpRemaining: number;
-  windowResetIn: number;
-  lastActionAgo: number;
-} {
-  const cfg = getXpConfig(guildId);
-  const key = `${guildId}:${userId}`;
-  const limit = rateLimits.get(key);
-  const now = Date.now();
-
-  if (!limit) {
-    return {
-      xpThisMinute: 0,
-      xpRemaining: cfg.xp_cap_per_minute,
-      windowResetIn: 0,
-      lastActionAgo: Infinity,
-    };
-  }
-
-  const windowAge = now - limit.windowStart;
-  const windowResetIn = Math.max(0, 60_000 - windowAge);
-  const xpRemaining = Math.max(0, cfg.xp_cap_per_minute - limit.sum);
-  const lastActionAgo = now - limit.lastActionTime;
-
-  return {
-    xpThisMinute: limit.sum,
-    xpRemaining,
-    windowResetIn,
-    lastActionAgo,
-  };
+export function shutdownXpSchedulers(): void {
+  // Currently no schedulers, but placeholder for future
 }

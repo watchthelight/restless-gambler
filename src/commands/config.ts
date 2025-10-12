@@ -161,16 +161,16 @@ export async function handleConfig(interaction: ChatInputCommandInteraction) {
       const v = String(Math.max(0, parseFloat(value) || 5));
       set('xp_per_1000_wagered', v);
     } else if (key === 'xp_flat_per_round') {
-      const v = String(Math.max(0, parseFloat(value) || 1));
+      const v = String(Math.max(0, parseFloat(value) || 0));
       set('xp_flat_per_round', v);
     } else if (key === 'xp_min_per_round') {
-      const v = String(Math.max(0, Math.floor(parseInt(value, 10) || 1)));
+      const v = String(Math.max(0, Math.floor(parseInt(value, 10) || 10)));
       set('xp_min_per_round', v);
     } else if (key === 'xp_max_per_round') {
       const v = String(Math.max(1, Math.floor(parseInt(value, 10) || 250)));
       set('xp_max_per_round', v);
     } else if (key === 'xp_cap_per_minute') {
-      const v = String(Math.max(1, Math.floor(parseInt(value, 10) || 500)));
+      const v = String(Math.max(1, Math.floor(parseInt(value, 10) || 1000)));
       set('xp_cap_per_minute', v);
     } else if (key === 'xp_cooldown_ms') {
       const v = String(Math.max(0, Math.floor(parseInt(value, 10) || 1500)));
@@ -219,13 +219,13 @@ export async function handleConfig(interaction: ChatInputCommandInteraction) {
     } else if (key === 'xp_per_1000_wagered') {
       value = getSetting(db, 'xp_per_1000_wagered') ?? '5';
     } else if (key === 'xp_flat_per_round') {
-      value = getSetting(db, 'xp_flat_per_round') ?? '1';
+      value = getSetting(db, 'xp_flat_per_round') ?? '0';
     } else if (key === 'xp_min_per_round') {
-      value = getSetting(db, 'xp_min_per_round') ?? '1';
+      value = getSetting(db, 'xp_min_per_round') ?? '10';
     } else if (key === 'xp_max_per_round') {
       value = getSetting(db, 'xp_max_per_round') ?? '250';
     } else if (key === 'xp_cap_per_minute') {
-      value = getSetting(db, 'xp_cap_per_minute') ?? '500';
+      value = getSetting(db, 'xp_cap_per_minute') ?? '1000';
     } else if (key === 'xp_cooldown_ms') {
       value = getSetting(db, 'xp_cooldown_ms') ?? '1500';
     }

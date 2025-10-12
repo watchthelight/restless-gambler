@@ -13,7 +13,7 @@ import { respondOnce } from '../../util/interactions.js';
 import { extractUserId, isValidSnowflake } from '../../util/discord.js';
 import { ensureSuperAdminsSchema, superAdminInsertSQL } from '../../db/adminSchema.js';
 import { syncAll, listGlobal, listGuild, purgeGuildCommands } from '../../registry/sync.js';
-import { updateBotPresence } from "../../metrics/project.js";
+import { refreshPresence } from "../../status/presence.js";
 import { runAdminAddNormal, runAdminAddSuper } from './add.js';
 import { formatBolts } from '../../economy/currency.js';
 import { setKV, uiExactMode, uiSigFigs } from '../../game/config.js';
@@ -525,7 +525,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   else if (sub === 'refresh-status') {
     await requireAdmin(interaction);
     await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => { });
-    await updateBotPresence(interaction.client, console);
+    await refreshPresence(interaction.client as any);
     await interaction.editReply({ content: "Status refreshed." }).catch(() => { });
   }
   else if (sub === 'ui') {

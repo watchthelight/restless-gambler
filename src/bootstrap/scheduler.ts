@@ -1,12 +1,16 @@
 import type { Client } from 'discord.js';
 import { cleanupExpiredBuffs } from "../rank/store.js";
+import { refreshPresence } from "../status/presence.js";
 
 export function startRankSchedulers(client: Client) {
-  // Hourly cleanup of expired luck buffs
+  // Cleanup expired buffs every 5 minutes; refresh presence only if changes.
   setInterval(() => {
+    let removedTotal = 0;
     for (const [gid] of client.guilds.cache) {
-      try { cleanupExpiredBuffs(gid); } catch { /* noop */ }
+      try { removedTotal += cleanupExpiredBuffs(gid) | 0; } catch { /* noop */ }
     }
-  }, 60 * 60 * 1000);
+    if (removedTotal > 0) {
+      try { refreshPresence(client); } catch { /* ignore */ }
+    }
+  }, 5 * 60 * 1000);
 }
-

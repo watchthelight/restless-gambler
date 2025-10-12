@@ -9,7 +9,7 @@ const log = createLogger();
 import boxen from 'boxen';
 import { VERBOSE, vlog } from './util/verbose.js';
 import { resolveRuntime } from './config/runtime.js';
-import { updateBotPresence } from "./metrics/project.js";
+import { refreshPresence } from "./status/presence.js";
 import { loadConfig, startTogglesWatcher } from './config/toggles.js';
 import { startLoanReminderLoop } from "./loans/reminders.js";
 import { setClient } from './bot/client.js';
@@ -76,7 +76,7 @@ async function main() {
   // Ready hooks (deprecation warning suppressed via --no-deprecation flag)
   client.once('ready', async () => {
     // Update presence once on boot
-    await updateBotPresence(client, console);
+    await refreshPresence(client);
 
     // Show ready message with stats
     const guildCount = client.guilds.cache.size;
@@ -103,7 +103,7 @@ async function main() {
     // Optional: refresh presence every 10 minutes
     const minutes = Number(process.env.STATUS_REFRESH_MINUTES ?? "10");
     if (Number.isFinite(minutes) && minutes > 0) {
-      setInterval(() => { updateBotPresence(client, console); }, minutes * 60 * 1000);
+      setInterval(() => { refreshPresence(client); }, minutes * 60 * 1000);
     }
 
     // Background: loan reminders (non-blocking)

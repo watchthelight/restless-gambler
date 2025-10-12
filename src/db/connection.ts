@@ -173,3 +173,16 @@ export function getDbPaths() {
     legacy_data: path.resolve(cfg.legacyData),
   };
 }
+
+// Iterate all currently opened per-guild DB handles.
+// Useful for cross-guild scans without forcing new DB opens.
+export async function forEachOpenGuildDb(fn: (db: Database.Database, guildId: string) => void | Promise<void>): Promise<void> {
+  for (const [gid, db] of guildCache.entries()) {
+    await fn(db, gid);
+  }
+}
+
+// Expose currently opened guild IDs (for diagnostics/tests)
+export function getOpenGuildIds(): string[] {
+  return Array.from(guildCache.keys());
+}

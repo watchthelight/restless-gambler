@@ -5,7 +5,6 @@ import { getGuildDb } from "../db/connection.js";
 import { getCommandControl } from "../db/commandControl.js";
 import { isSuperAdmin } from "../admin/permissions.js";
 import { isEnabled, reason as disabledReason } from "../config/toggles.js";
-import { getGuildSettings, setHomeChannel } from "../db/guildSettings.js";
 
 export function initInteractionRouter(client: Client) {
   client.on("interactionCreate", async (i: Interaction) => {
@@ -36,23 +35,9 @@ export function initInteractionRouter(client: Client) {
 
       if (!isEnabled(name)) {
         const r = disabledReason(name);
-        await (i as any).reply({ content: "- /" + name + " is currently disabled" + (r ? (" - " + r) : "") + "." }).catch(() => { });
+        await (i as any).reply({ content: "— /" + name + " is currently disabled" + (r ? (" — " + r) : "") + "." }).catch(() => { });
         return;
       }
-
-      // Capture first-use home channel (per guild)
-      try {
-        const gid = (i as any).guildId as string | undefined;
-        const cid = (i as any).channelId as string | undefined;
-        if (gid && cid) {
-          const db = getGuildDb(gid);
-          const gs = getGuildSettings(db, gid);
-          if (!gs.home_channel_id) {
-            setHomeChannel(db, gid, cid);
-            try { console.debug({ msg: 'home_channel_set', guildId: gid, channelId: cid }); } catch {}
-          }
-        }
-      } catch { /* ignore */ }
 
       const cmd = getSlashCommands().find((c) => c.name === name);
       if (!cmd) {

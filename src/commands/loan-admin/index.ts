@@ -2,6 +2,8 @@ import {
   SlashCommandBuilder,
   ChatInputCommandInteraction,
   MessageFlags,
+  ChannelType,
+  TextChannel,
 } from 'discord.js';
 import { requireAdmin } from '../../admin/guard.js';
 import { getGuildTheme } from '../../ui/theme.js';
@@ -10,6 +12,11 @@ import { resetScore } from '../../loans/credit.js';
 import { forgiveAll, setReminderChannelId } from '../../loans/store.js';
 import { getBalance, adjustBalance } from '../../economy/wallet.js';
 import { runOneGuildReminderSweep } from '../../loans/reminders.js';
+import { getGuildDb } from '../../db/connection.js';
+import { getGuildSettings } from '../../db/guildSettings.js';
+import { buildLoanReminderEmbed } from '../../ui/loanReminderCard.js';
+import { getReminderPref } from '../../loans/prefs.js';
+import { jsonStringifySafeBigint } from '../../utils/json.js';
 import { makePublicAdmin } from '../util/adminBuilder.js';
 
 export const data = makePublicAdmin(
@@ -92,8 +99,70 @@ export async function execute(
 
   if (sub === 'remind-all') {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => {});
-    const count = await runOneGuildReminderSweep(interaction.client as any, guildId);
-    await interaction.editReply({ content: `Reminder sweep done. Notices sent: ${count}` });
+    const guild = interaction.guild;
+    if (!guild) { await interaction.editReply({ content: 'Guild only.' }); return; }
+
+    const db = getGuildDb(guildId);
+    const gs = getGuildSettings(db, guildId);
+
+    // Resolve target channel: saved home channel → fallback to current text channel → error
+    let targetChannel: TextChannel | null = null;
+    if (gs.home_channel_id) {
+      const ch = await guild.channels.fetch(gs.home_channel_id).catch(() => null);
+      if (ch && ch.type === ChannelType.GuildText && ch.isTextBased()) targetChannel = ch as TextChannel;
+    }
+    if (!targetChannel && interaction.channel?.type === ChannelType.GuildText) {
+      targetChannel = interaction.channel as TextChannel;
+    }
+    if (!targetChannel) {
+      await interaction.editReply({ content: 'No suitable text channel to post reminders. Run a command once in the desired channel first.' });
+      return;
+    }
+
+    const rows = db.prepare(`SELECT id, user_id, principal, apr_bps, term_days, start_ts, due_ts, accrued_interest, paid_principal, paid_interest, status FROM loans WHERE status IN ('active','late','defaulted') ORDER BY due_ts ASC`).all() as any[];
+    let sent = 0, skippedOptOut = 0, skippedNoMember = 0, failed = 0;
+
+    for (const l of rows) {
+      const userId = String(l.user_id);
+      const member = await guild.members.fetch(userId).catch(() => null);
+      if (!member) { skippedNoMember++; continue; }
+      if (!getReminderPref(guildId, userId)) { skippedOptOut++; continue; }
+
+      const principal = BigInt(l.principal || 0);
+      const remaining = BigInt(l.principal || 0) - BigInt(l.paid_principal || 0) + (BigInt(l.accrued_interest || 0) - BigInt(l.paid_interest || 0));
+      const embed = buildLoanReminderEmbed({
+        borrowerMention: `<@${userId}>`,
+        principal,
+        remaining,
+        aprBps: Number(l.apr_bps || 0),
+        termDays: Number(l.term_days || 0),
+        dueAtIso: new Date(Number(l.due_ts || 0)).toISOString(),
+      });
+
+      try {
+        await targetChannel.send({
+          content: `<@${userId}>`,
+          embeds: [embed],
+          allowedMentions: { users: [userId] },
+        });
+        sent++;
+        await new Promise((r) => setTimeout(r, 50));
+      } catch {
+        failed++;
+      }
+    }
+
+    try {
+      db.prepare('INSERT INTO audit_log(json) VALUES(?)').run(jsonStringifySafeBigint({ msg: 'loan_reminder_sweep', guildId, total: rows.length, sent, skippedOptOut, skippedNoMember, failed }));
+    } catch { }
+
+    await interaction.editReply({
+      content: `Reminder sweep complete in ${targetChannel}.\n` +
+        `• Notices sent: **${sent}**\n` +
+        (skippedOptOut ? `• Skipped (opt-out): ${skippedOptOut}\n` : '') +
+        (skippedNoMember ? `• Skipped (left server): ${skippedNoMember}\n` : '') +
+        (failed ? `• Failed to post: ${failed}\n` : ''),
+    });
     return;
   }
 
@@ -109,4 +178,3 @@ export async function execute(
     return;
   }
 }
-

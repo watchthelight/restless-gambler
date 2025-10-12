@@ -8,6 +8,8 @@ import { getSetting, getSettingNum } from "../db/kv.js";
 import { addXP, grantLuck } from "./store.js";
 import { clamp } from "./math.js";
 import { queueRankUpAnnouncement } from "./announce.js";
+import { refreshPresence } from "../status/presence.js";
+import { getClient } from "../bot/client.js";
 
 // In-memory rate limiting: per-user per-minute XP caps
 interface RateLimitWindow {
@@ -142,6 +144,8 @@ export function onGambleXP(
     const luck = Math.min(cfg.luck_bonus_bps ?? 150, cfg.luck_max_bps ?? 300);
     const dur = cfg.luck_duration_sec ?? 3600;
     grantLuck(guildId, userId, luck, dur);
+    // Fire-and-forget presence refresh (do not block user flow)
+    try { refreshPresence(getClient()).catch(() => {}); } catch { }
     if (cfg.rank_public_promotions !== false) {
       try { queueRankUpAnnouncement(guildId, userId, level, luck, dur); } catch { }
     }

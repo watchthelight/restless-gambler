@@ -1,21 +1,14 @@
 import type Database from 'better-sqlite3';
 import { toBigInt } from '../utils/bigint.js';
+import { parseHumanAmount as parseHumanAmountLib } from '../lib/amount.js';
 
 export type MaxBet = { disabled: true } | { disabled: false; limit: bigint };
 
 // accepts 1_000, 10k, 2.5m, 3b, plain ints
 export function parseHumanAmount(input: string): bigint {
-  const s = input.trim().toLowerCase().replace(/_/g, '');
-  if (!s) throw new Error('empty amount');
-  const match = s.match(/^([0-9]+(?:\.[0-9]+)?)([kmbt])?$/); // k=1e3, m=1e6, b=1e9, t=1e12
-  let num = s;
-  if (match) {
-    const [, n, suf] = match;
-    const mult = suf ? ({ k: 1e3, m: 1e6, b: 1e9, t: 1e12 } as any)[suf] : 1;
-    num = (Number(n) * mult).toString();
-  }
-  if (!/^\d+$/.test(num)) throw new Error('invalid amount');
-  return toBigInt(num);
+  const res = parseHumanAmountLib(input);
+  if ('value' in res) return res.value;
+  throw new Error(res.code);
 }
 
 export function getMaxBet(db: Database.Database): MaxBet {

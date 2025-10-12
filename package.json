@@ -34,7 +34,7 @@
     "build:cards": "node -e \"console.log('build:cards placeholder');\"",
     "setup:env": "node -e \"const fs=require('fs');if(!fs.existsSync('.env')){fs.copyFileSync('.env.example','.env');console.log('Created .env from .env.example');}else{console.log('.env already exists')}\"",
     "start:cli": "node dist/index.js",
-    "launch": "npm run build && npm test && npm run start:pretty"
+    "launch": "powershell -ExecutionPolicy Bypass -File ./scripts/launch.ps1"
   },
   "dependencies": {
     "better-sqlite3": "^9.4.0",

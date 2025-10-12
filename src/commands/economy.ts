@@ -30,12 +30,12 @@ export const commands = [
     .setName('give')
     .setDescription('Give currency to another user')
     .addUserOption((o) => o.setName('user').setDescription('Recipient').setRequired(true))
-    .addIntegerOption((o) => o.setName('amount').setDescription('Amount').setRequired(true).setMinValue(1)),
+    .addStringOption((o) => o.setName('amount').setDescription('Amount (e.g., 2.5m, 1b, 750k)').setRequired(true)),
   new SlashCommandBuilder()
     .setName('transfer')
     .setDescription('Transfer chips to another user')
     .addUserOption((o) => o.setName('user').setDescription('Recipient').setRequired(true))
-    .addIntegerOption((o) => o.setName('amount').setDescription('Amount').setRequired(true).setMinValue(1)),
+    .addStringOption((o) => o.setName('amount').setDescription('Amount (e.g., 2.5m, 1b, 750k)').setRequired(true)),
   new SlashCommandBuilder()
     .setName('leaderboard')
     .setDescription('Show top balances')
@@ -51,7 +51,7 @@ export const commands = [
   new SlashCommandBuilder()
     .setName('gamble')
     .setDescription('Wager an amount with fair odds')
-    .addIntegerOption((o) => o.setName('amount').setDescription('Amount to wager').setRequired(true).setMinValue(1)),
+    .addStringOption((o) => o.setName('amount').setDescription('Amount to wager (e.g., 2.5m)').setRequired(true)),
   new SlashCommandBuilder().setName('cooldown').setDescription('Show your active cooldowns'),
   new SlashCommandBuilder().setName('resetme').setDescription('Reset your balance and stats (confirmation required)'),
   new SlashCommandBuilder().setName('help').setDescription('Show help and disclaimer'),
@@ -122,7 +122,9 @@ export async function handleEconomy(interaction: ChatInputCommandInteraction) {
       }
 
       const user = interaction.options.getUser('user', true);
-      const amount = interaction.options.getInteger('amount', true);
+      const { getParsedAmount } = await import('../interactions/options.js');
+      const parsed = await getParsedAmount(interaction, 'amount');
+      const amount = Number(parsed.value);
 
       // Clamp amount to 10% of sender balance
       const senderBalance = Number(getBalance(interaction.guildId!, interaction.user.id));
@@ -155,7 +157,9 @@ export async function handleEconomy(interaction: ChatInputCommandInteraction) {
       if (!await ensureGuildInteraction(interaction)) break;
       await safeDefer(interaction, { ephemeral: false });
       const user = interaction.options.getUser('user', true);
-      const amount = interaction.options.getInteger('amount', true);
+      const { getParsedAmount: getParsedAmount2 } = await import('../interactions/options.js');
+      const parsed2 = await getParsedAmount2(interaction, 'amount');
+      const amount = parsed2.value;
       try {
         const { from } = await transfer(interaction.guildId!, interaction.user.id, user.id, amount);
         const pretty = formatBalance(from);
@@ -202,7 +206,9 @@ export async function handleEconomy(interaction: ChatInputCommandInteraction) {
         break;
       }
 
-      const amount = interaction.options.getInteger('amount', true);
+      const { getParsedAmount: getParsedAmount3 } = await import('../interactions/options.js');
+      const parsed3 = await getParsedAmount3(interaction, 'amount');
+      const amount = Number(parsed3.value);
       if (amount <= 0) { await interaction.reply({ content: 'Amount must be positive.' }); break; }
       const max = parseInt(process.env.GAMBLE_MAX_BET || '0', 10);
       if (max > 0 && amount > max) { await interaction.reply({ content: `Max bet is ${max}.` }); break; }

@@ -28,7 +28,7 @@ import { ensureGuildInteraction } from '../../interactions/guards.js';
 import { withUserLuck } from '../../rng/luck.js';
 import { onGambleXP } from '../../rank/xpEngine.js';
 import { rememberUserChannel } from '../../rank/announce.js';
-import { getSetting } from '../../db/kv.js';
+import { getSetting, setSetting } from '../../db/kv.js';
 import { dbToBigint, bigintToDb, toBigInt } from '../../utils/bigint.js';
 import type { RNG } from '../../util/rng.js';
 import { logInfo, logError } from '../../utils/logger.js';
@@ -56,7 +56,7 @@ const tmap = new Map<string, NodeJS.Timeout>(); // key: g:c:u
 export const data = new SlashCommandBuilder()
   .setName('blackjack')
   .setDescription('Blackjack 21')
-  .addSubcommand((s) => s.setName('start').setDescription('Start a round').addIntegerOption((o) => o.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1)))
+  .addSubcommand((s) => s.setName('start').setDescription('Start a round').addStringOption((o) => o.setName('bet').setDescription('Bet amount (e.g., 2.5m)').setRequired(true)))
   .addSubcommand((s) => s.setName('hit').setDescription('Hit (draw one card)'))
   .addSubcommand((s) => s.setName('stand').setDescription('Stand; dealer plays out'))
   .addSubcommand((s) => s.setName('double').setDescription('Double down (first decision only)'))
@@ -101,7 +101,7 @@ async function renderAndReply(i: ChatInputCommandInteraction | ButtonInteraction
   );
   const playAgainRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      .setCustomId(`bj:again:${g}:${uid}:${state.bet}`)
+      .setCustomId(`bj:play-again:${g}:${uid}`)
       .setStyle(ButtonStyle.Success)
       .setLabel('Play Again')
       .setDisabled(!dis)
@@ -198,7 +198,7 @@ function ensureTimeout(guildId: string, channelId: string, userId: string, clien
               new ButtonBuilder().setCustomId(`blackjack:double:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Success).setLabel('Double Down').setDisabled(true),
             );
           const again = new ActionRowBuilder<ButtonBuilder>().addComponents(
-            new ButtonBuilder().setCustomId(`bj:again:${guildId}:${userId}:${state.bet}`).setStyle(ButtonStyle.Success).setLabel('Play Again')
+            new ButtonBuilder().setCustomId(`bj:play-again:${guildId}:${userId}`).setStyle(ButtonStyle.Success).setLabel('Play Again')
           );
           await msg.edit({ embeds: [themeEmbed], components: [row, again] });
         } catch { }
@@ -218,7 +218,9 @@ export async function execute(i: ChatInputCommandInteraction) {
   const db = getGuildDb(guildId);
   try { rememberUserChannel(guildId, userId, channelId); } catch {}
   if (sub === 'start') {
-    const bet = i.options.getInteger('bet', true);
+    const { getParsedAmount } = await import('../../interactions/options.js');
+    const parsed = await getParsedAmount(i as any, 'bet');
+    const bet = Number(parsed.value);
     const limits = blackjackLimits(db);
     // Only enforce min here; max is handled centrally by assertWithinMaxBet
     if (bet < limits.minBet) { await i.reply({ content: `Minimum bet is ${formatBolts(limits.minBet)}.` }); return; }
@@ -272,6 +274,7 @@ export async function execute(i: ChatInputCommandInteraction) {
       sub: 'start'
     }, { bet });
     const m = await renderAndReply(i, state, { revealDealer: false, disableDouble: false, finished: state.finished });
+    try { setSetting(db, `blackjack.last_bet.user.${userId}`, String(bet)); } catch {}
     try { const msg = await (m as any); const mid = (msg?.id || (await i.fetchReply())?.id) as string; if (mid) { (state as any).messageId = mid; saveSession(guildId, userId, state); } } catch { }
     ensureTimeout(guildId, channelId, userId, i.client);
     // Auto settle if immediate blackjack conditions
@@ -351,7 +354,7 @@ export async function execute(i: ChatInputCommandInteraction) {
               new ButtonBuilder().setCustomId(`blackjack:double:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Success).setLabel('Double Down').setDisabled(true),
             );
           const again = new ActionRowBuilder<ButtonBuilder>().addComponents(
-            new ButtonBuilder().setCustomId(`bj:again:${guildId}:${userId}:${state.bet}`).setStyle(ButtonStyle.Success).setLabel('Play Again')
+            new ButtonBuilder().setCustomId(`bj:play-again:${guildId}:${userId}`).setStyle(ButtonStyle.Success).setLabel('Play Again')
           );
           const payload: any = { embeds: [embed], components: [row, again] };
           if (handRender.kind === 'image') payload.files = [handRender.attachment];
@@ -388,9 +391,9 @@ export async function execute(i: ChatInputCommandInteraction) {
             new ButtonBuilder().setCustomId(`blackjack:stand:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Secondary).setLabel('Stand').setDisabled(true),
             new ButtonBuilder().setCustomId(`blackjack:double:${guildId}:${channelId}:${userId}`).setStyle(ButtonStyle.Success).setLabel('Double Down').setDisabled(true),
           );
-        const again = new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder().setCustomId(`bj:again:${guildId}:${userId}:${state.bet}`).setStyle(ButtonStyle.Success).setLabel('Play Again')
-        );
+          const again = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId(`bj:play-again:${guildId}:${userId}`).setStyle(ButtonStyle.Success).setLabel('Play Again')
+          );
         const payload: any = { embeds: [embed], components: [row, again] };
         if (handRender.kind === 'image') payload.files = [handRender.attachment];
         await (i as any).editReply ? (i as any).editReply(payload) : (i as any).reply(payload);
@@ -532,59 +535,25 @@ export async function handleButton(i: ButtonInteraction) {
 }
 
 export async function handleAgainButton(i: ButtonInteraction) {
-  const [prefix, action, g, u, betStr] = i.customId.split(':');
-  if (prefix !== 'bj' || action !== 'again') return;
+  const [prefix, action, g, u] = i.customId.split(':');
+  if (prefix !== 'bj' || action !== 'play-again') return;
   if (!i.guildId || i.guildId !== g) return;
   if (i.user.id !== u) {
     await safeReply(i, { content: 'Only the original player can start a new hand from this card.' });
     return;
   }
-  const bet = Number(betStr);
   await withLock(`bj:${g}:${u}`, async () => {
     // Router already deferred this button; do not defer again.
     const db = getGuildDb(i.guildId!);
-    // Ensure no active session exists
     if (findActiveSession(db, i.guildId!, i.user.id)) return;
-    // Validate funds and limits
     const limits = blackjackLimits(db);
-    if (bet < limits.minBet) {
-      await i.followUp({ content: `Minimum bet is ${formatBolts(limits.minBet)}.`, flags: MessageFlags.Ephemeral }).catch(() => {});
-      return;
-    }
-    try { assertWithinMaxBet(db, toBigInt(bet)); } catch (e: any) {
-      if (e?.code === 'ERR_MAX_BET') { try { console.debug({ msg: 'bet_blocked', code: 'ERR_MAX_BET', guildId: i.guildId, userId: i.user.id, bet: String(bet) }); } catch {} await i.followUp({ content: e.message, flags: MessageFlags.Ephemeral }).catch(() => {}); return; }
-      throw e;
-    }
-    const bal = getBalance(i.guildId!, i.user.id);
-    if (bal < BigInt(bet)) {
-      await i.followUp({ content: 'Not enough funds for that bet.', flags: MessageFlags.Ephemeral }).catch(() => {});
-      return;
-    }
-    // Reserve and deal
-    await adjustBalance(i.guildId!, i.user.id, -bet, 'blackjack:bet');
-    const ranksEnabled = (getSetting(getGuildDb(i.guildId!), 'features.ranks.enabled') !== 'false');
-    const rng: RNG = (max: number) => Math.floor(((ranksEnabled ? withUserLuck(i.guildId!, i.user.id, () => Math.random()) : Math.random())) * max);
-    const state = dealInitial(bet, rng);
-    (state as any).channelId = i.channelId;
-    saveSession(i.guildId!, i.user.id, state);
-    // Render initial hand as a NEW message
-    const theme = getGuildTheme(i.guildId);
-    const ph = state.playerHands[state.activeIndex]?.cards || state.playerHands[0].cards;
-    const toCard = (c: any) => ({ suit: c.s as any, rank: (c.r as any) });
-    const playerCards = ph.map(toCard);
-    const dealerCards = state.dealer.cards.map(toCard);
-    const handRender = await renderHands(i.guildId!, playerCards, dealerCards, false);
-    const embed = themedEmbed(theme, '🂡 Blackjack', 'Your move.');
-    if (handRender.kind === 'image') embed.setImage(`attachment://${(handRender.attachment as any).name}`);
-    const row = new ActionRowBuilder<ButtonBuilder>()
-      .addComponents(
-        new ButtonBuilder().setCustomId(`blackjack:hit:${i.guildId}:${i.channelId}:${i.user.id}`).setStyle(ButtonStyle.Primary).setLabel('Hit'),
-        new ButtonBuilder().setCustomId(`blackjack:stand:${i.guildId}:${i.channelId}:${i.user.id}`).setStyle(ButtonStyle.Secondary).setLabel('Stand'),
-        new ButtonBuilder().setCustomId(`blackjack:double:${i.guildId}:${i.channelId}:${i.user.id}`).setStyle(ButtonStyle.Success).setLabel('Double Down'),
-      );
-    const payload: any = { embeds: [embed], components: [row] };
-    if (handRender.kind === 'image') payload.files = [handRender.attachment];
-    await i.followUp(payload).catch(() => {});
-    ensureTimeout(i.guildId!, i.channelId, i.user.id, i.client);
+    const last = Number(getSetting(db, `blackjack.last_bet.user.${i.user.id}`) ?? limits.minBet);
+    const bet = Number.isFinite(last) && last > 0 ? last : limits.minBet;
+    // Reuse start path by faking options
+    (i as any).options = {
+      getSubcommand: () => 'start',
+      getString: (name: string) => (name === 'bet' ? String(bet) : null),
+    } as any;
+    await execute(i as any);
   });
 }

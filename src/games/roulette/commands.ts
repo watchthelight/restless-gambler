@@ -25,8 +25,8 @@ import { toBigInt } from '../../utils/bigint.js';
 export const data = new SlashCommandBuilder()
   .setName('roulette')
   .setDescription('Place a roulette bet')
-  .addIntegerOption((opt) =>
-    opt.setName('bet').setDescription('Bet amount').setRequired(true).setMinValue(1),
+  .addStringOption((opt) =>
+    opt.setName('bet').setDescription('Bet amount (e.g., 2.5m, 1b)').setRequired(true),
   )
   .addStringOption((opt) =>
     opt
@@ -61,7 +61,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   const userId = interaction.user.id;
   rememberUserChannel(interaction.guildId!, interaction.user.id, interaction.channelId);
-  const betAmount = interaction.options.getInteger('bet', true);
+  const { getParsedAmount } = await import('../../interactions/options.js');
+  const parsed = await getParsedAmount(interaction as any, 'bet');
+  const betAmount = Number(parsed.value);
   const type = interaction.options.getString('type', true) as Bet['type'];
   const selection = interaction.options.getString('selection') ?? '';
   const db = getGuildDb(interaction.guildId!);
@@ -87,7 +89,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   } catch { }
 
   // Centralized max bet guard
-  try { assertWithinMaxBet(db, toBigInt(betAmount)); } catch (e: any) {
+  try { assertWithinMaxBet(db, BigInt(parsed.value)); } catch (e: any) {
     if (e?.code === 'ERR_MAX_BET') { try { console.debug({ msg: 'bet_blocked', code: 'ERR_MAX_BET', guildId: interaction.guildId, userId, bet: String(betAmount) }); } catch {}
       await interaction.reply({ content: e.message }); return; }
     throw e;

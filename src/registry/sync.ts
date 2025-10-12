@@ -94,6 +94,16 @@ export async function syncAll(rest: REST, client: any, log: any = console) {
     return { globalCount, purged, purgedDisabled, purgedLegacyGlobal };
 }
 
+// Convenience wrapper used by admin command: returns a simplified summary
+export async function syncApplicationCommands(client: any, log: any = console) {
+    const { REST } = await import('discord.js');
+    const rest = new (REST as any)({ version: '10' }).setToken(process.env.BOT_TOKEN!);
+    const res: any = await syncAll(rest as any, client, log);
+    const created = Number(res?.globalCount || 0);
+    const deleted = Number((res?.purged || []).reduce((a: number, b: any) => a + (b?.count || 0), 0) + (res?.purgedDisabled || 0) + (res?.purgedLegacyGlobal || 0));
+    return { created, updated: 0, deleted };
+}
+
 export async function listGlobal(rest: REST) {
     const appId = process.env.APP_ID || process.env.DISCORD_APP_ID || process.env.CLIENT_ID;
     const list: any[] = await rest.get(Routes.applicationCommands(appId as string)) as any[];

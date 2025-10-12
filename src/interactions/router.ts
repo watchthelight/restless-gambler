@@ -9,6 +9,9 @@ import { isEnabled, reason as disabledReason } from "../config/toggles.js";
 import { getGuildSettings, setHomeChannel } from "../db/guildSettings.js";
 import { logCmdStart, logCmdEnd, logBlocked } from "../utils/logger.js";
 import { sendPublicError, newErrorId } from '../lib/errorReply.js';
+import { AmountParseError } from '../lib/amount.js';
+import { amountErrorEmbed } from './errors/amount.js';
+import { ensurePublicDefer } from '../lib/publicReply.js';
 import { handleAutocomplete } from './autocomplete.js';
 import { handleSlotsButton } from './buttons/slots.js';
 import * as EconButtons from './buttons/econ.js';
@@ -68,7 +71,9 @@ export function initInteractionRouter(client: Client) {
             const db = getGuildDb((i as any).guildId);
             const cc = getCommandControl(db, (i as any).guildId);
             const cmd = name.toLowerCase();
-            const isEscapeHatch = (cmd === "admin" && ((sub?.toLowerCase?.() ?? null) === "whitelist-release"));
+            const subLower = (sub?.toLowerCase?.() ?? null);
+            // Allow certain admin tools even in whitelist mode
+            const isEscapeHatch = (cmd === "admin" && (subLower === "whitelist-release" || subLower === "toggles"));
             let isSuper = false;
             try { isSuper = isSuperAdmin(db, (i as any).user?.id); } catch { isSuper = false; }
             if (cc.mode === "whitelist" && !isEscapeHatch && !isSuper) {
@@ -82,7 +87,9 @@ export function initInteractionRouter(client: Client) {
           } catch { /* ignore */ }
         }
 
-        if (!isEnabled(name)) {
+        // Allow /admin toggles even if /admin is disabled in config
+        const bypassDisabled = (name.toLowerCase() === 'admin' && (sub?.toLowerCase?.() ?? '') === 'toggles');
+        if (!bypassDisabled && !isEnabled(name)) {
           const r = disabledReason(name);
           await (i as any).reply({ content: "- /" + name + " is currently disabled" + (r ? (" - " + r) : "") + "." }).catch(() => { });
           logBlocked(r ?? "command disabled", ctx);
@@ -125,6 +132,18 @@ export function initInteractionRouter(client: Client) {
           if (ackTimer) clearTimeout(ackTimer);
         } catch (err: any) {
           if (ackTimer) clearTimeout(ackTimer);
+          // Special-case amount parse errors: always show public red card with suggestions
+          if (err && err.name === 'AmountParseError') {
+            try { await ensurePublicDefer(i as any); } catch {}
+            const embed = amountErrorEmbed((err as any).err, { command: name });
+            try {
+              if (!(i as any).deferred && !(i as any).replied) await (i as any).reply({ embeds: [embed], ephemeral: false });
+              else await (i as any).editReply({ embeds: [embed] });
+            } catch (e) {
+              try { await (i as any).followUp({ embeds: [embed], ephemeral: false }); } catch {}
+            }
+            return;
+          }
           const errorId = newErrorId();
           console.error(chalk.red(`[${new Date().toISOString()}] ? ERROR in ${name}  #${errorId}`));
           console.error(chalk.red((err && err.stack) || String(err)));
@@ -151,14 +170,14 @@ export function initInteractionRouter(client: Client) {
             await handleSlotsButton(i as any);
           } else if (cid.startsWith('blackjack:')) {
             await (BlackjackSlash as any).handleButton(i as any);
-          } else if (cid.startsWith('bj:again:')) {
+          } else if (cid.startsWith('bj:play-again:')) {
             await (BlackjackSlash as any).handleAgainButton(i as any);
           } else if (cid.startsWith('roulette:')) {
             await (RouletteCmd as any).handleRouletteButton(i as any);
           } else if (cid.startsWith('econ:')) {
             await (EconButtons as any).handleButton(i as any);
           } else if (cid.startsWith('admin:reboot:confirm:')) {
-            await (AdminCmd as any).handleButton(i as any);
+            // Deprecated button; ignore
           } else if (cid.startsWith('loan:')) {
             await (LoanCmd as any).handleButton?.(i as any);
           } else {

@@ -4,7 +4,7 @@ import * as AdminCmd from './index.js';
 import { setMaxAdminGrant, getMaxAdminGrant, ECONOMY_LIMITS } from '../../config/economy.js';
 import { formatBalance } from '../../util/formatBalance.js';
 
-function makeIx({ guildId, adminId, targetId, amount }: { guildId: string; adminId: string; targetId: string; amount: number }) {
+function makeIx({ guildId, adminId, targetId, amount }: { guildId: string; adminId: string; targetId: string; amount: number | string }) {
   const messages: any[] = [];
   const ix: any = {
     commandName: 'admin',
@@ -16,7 +16,7 @@ function makeIx({ guildId, adminId, targetId, amount }: { guildId: string; admin
       getSubcommandGroup: (_?: boolean) => null,
       getSubcommand: (_?: boolean) => 'give',
       getUser: (_: string, __: boolean) => ({ id: targetId, tag: 'Target#0001', username: 'Target' }),
-      getInteger: (_: string, __: boolean) => amount,
+      getString: (_: string, __: boolean) => String(amount),
     },
     replied: false,
     deferred: false,
@@ -42,7 +42,7 @@ describe('admin give respects max_admin_grant cap', () => {
 
   test('clamps to configured cap and posts warning', async () => {
     setMaxAdminGrant(guildId, 50_000n);
-    const { ix, messages } = makeIx({ guildId, adminId, targetId, amount: 100_000 });
+    const { ix, messages } = makeIx({ guildId, adminId, targetId, amount: '100000' });
     await (AdminCmd as any).execute(ix);
     // Find warning embed
     const hasWarning = messages.some((m) => {

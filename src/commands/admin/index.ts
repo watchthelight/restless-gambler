@@ -2,7 +2,7 @@ import { SlashCommandBuilder, ChatInputCommandInteraction, AttachmentBuilder, Ac
 import { spawn } from 'node:child_process';
 import { requireAdmin, requireSuper } from '../../admin/guard.js';
 import { makePublicAdmin } from '../util/adminBuilder.js';
-import { ensureAttached as ensureAdminAttached, addGuildAdmin, getPerGuildAdmins, getSupers, isSuper as storeIsSuper, isGuildAdmin as storeIsGuildAdmin } from '../../admin/adminStore.js';
+import { ensureAttached as ensureAdminAttached, addGuildAdmin, getPerGuildAdmins, getSupers, isSuper as storeIsSuper, isGuildAdmin as storeIsGuildAdmin, promoteToSuper as storePromoteToSuper } from '../../admin/adminStore.js';
 import { themedEmbed } from '../../ui/embeds.js';
 import { safeReply } from '../../interactions/reply.js';
 import { getGuildTheme } from '../../ui/theme.js';
@@ -32,32 +32,15 @@ import { logInfo, logError } from '../../utils/logger.js';
 import { getMaxAdminGrant } from '../../config/economy.js';
 import { fmtCoins } from '../../lib/amount.js';
 import { okCard } from '../../ui/cards.js';
+import { replyCard } from '../../lib/replyCard.js';
+import * as fs from 'node:fs';
+import { setRebootMarker } from '../../admin/rebootMarker.js';
 
 export async function performReboot(): Promise<void> {
   // In tests, DO NOT schedule timers or exit the process.
   if (isTestEnv()) return;
-
-  // Platform-specific restart
-  if (process.platform === 'win32') {
-    // Windows: use detached batch script
-    const scriptPath = 'scripts\\restart.bat';
-    spawn('cmd', ['/c', scriptPath], {
-      detached: true,
-      stdio: 'ignore',
-      windowsHide: true
-    }).unref();
-  } else {
-    // POSIX: simple pkill and restart
-    spawn('sh', ['-c', 'pkill -f "dist/index.js"; nohup node dist/index.js >/dev/null 2>&1 &'], {
-      detached: true,
-      stdio: 'ignore'
-    }).unref();
-  }
-
-  // Defer exit slightly so Discord can flush replies
-  setTimeout(() => {
-    try { process.exit(0); } catch { }
-  }, 300);
+  try { fs.writeFileSync('.reboot.flag', '1'); } catch { }
+  try { process.exit(0); } catch { }
 }
 
 export const data = makePublicAdmin(
@@ -69,7 +52,6 @@ export const data = makePublicAdmin(
   .addSubcommand((s) => s.setName('promote').setDescription('Promote to SUPER').addUserOption((o) => o.setName('user').setDescription('Target user').setRequired(true)))
   .addSubcommand((s) => s.setName('demote').setDescription('Demote to ADMIN').addUserOption((o) => o.setName('user').setDescription('Target user').setRequired(true)))
   .addSubcommand((s) => s.setName('remove').setDescription('Remove guild admin').addUserOption((o) => o.setName('user').setDescription('Target user').setRequired(true)))
-  .addSubcommand((s) => s.setName('super-remove').setDescription('Remove super admin').addStringOption((o) => o.setName('user').setDescription('Target user ID or mention').setRequired(true)))
   .addSubcommand((s) => s.setName('list').setDescription('List admins'))
   .addSubcommand((s) => s.setName('whoami').setDescription('Show your role'))
   .addSubcommand((s) => s.setName('reboot').setDescription('Reboot the bot (Admin+)'))
@@ -78,14 +60,14 @@ export const data = makePublicAdmin(
       .setName('give')
       .setDescription('Admin: give currency to a user')
       .addUserOption((o) => o.setName('user').setDescription('Target user').setRequired(true))
-      .addIntegerOption((o) => o.setName('amount').setDescription('Amount to add').setRequired(true).setMinValue(1)),
+      .addStringOption((o) => o.setName('amount').setDescription('Amount to add (e.g., 2.5m, 1b, 750k)').setRequired(true)),
   )
   .addSubcommand((s) =>
     s
       .setName('take')
       .setDescription('Admin: take currency from a user (not below 0)')
       .addUserOption((o) => o.setName('user').setDescription('Target user').setRequired(true))
-      .addIntegerOption((o) => o.setName('amount').setDescription('Amount to subtract').setRequired(true).setMinValue(1)),
+      .addStringOption((o) => o.setName('amount').setDescription('Amount to subtract (e.g., 2.5m, 1b, 750k)').setRequired(true)),
   )
   .addSubcommand((s) =>
     s
@@ -131,17 +113,6 @@ export const data = makePublicAdmin(
     group.setName("ui")
       .setDescription("UI preferences")
       .addSubcommand(ss =>
-        ss.setName("exact-mode")
-          .setDescription("How to show precise amounts")
-          .addStringOption(o => o.setName("mode").setDescription("off | inline | on_click").setRequired(true)
-            .addChoices(
-              { name: "off", value: "off" },
-              { name: "inline", value: "inline" },
-              { name: "on_click", value: "on_click" }))
-          .addStringOption(o => o.setName("scope").setDescription("guild | user").addChoices(
-            { name: "guild", value: "guild" }, { name: "user", value: "user" }))
-          .addUserOption(o => o.setName("user").setDescription("Only if scope=user")))
-      .addSubcommand(ss =>
         ss.setName("sigfigs")
           .setDescription("Compact significant figures (3..5)")
           .addIntegerOption(o => o.setName("n").setDescription("3..5").setRequired(true))));
@@ -155,22 +126,25 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const db = getGuildDb(interaction.guildId!);
     const guildId = interaction.guildId!;
     ensureAdminAttached(db);
+    if (storeIsGuildAdmin(db, guildId, user.id)) {
+      return replyCard(interaction, {
+        title: 'Admin unchanged',
+        description: 'User is already a guild admin. To promote to SUPER admin, contact the developer.'
+      });
+    }
     addGuildAdmin(db, guildId, user.id);
-    await interaction.reply({
-      content: `Added <@${user.id}> as guild admin.`,
-      allowedMentions: { users: [] }
+    return replyCard(interaction, {
+      title: 'Admin added',
+      description: `Granted admin to <@${user.id}>`
     });
-    return;
   }
   else if (sub === 'promote') {
     await requireSuper(interaction);
     const user = interaction.options.getUser('user', true);
     const db = getGuildDb(interaction.guildId!);
     ensureAdminAttached(db);
-    // Promote to global super: insert into attached admin.super_admins
-    db.prepare(`INSERT OR IGNORE INTO admin.super_admins(user_id) VALUES(?)`).run(user.id);
-    await interaction.reply({ content: `Promoted <@${user.id}> to SUPER.` });
-    return;
+    storePromoteToSuper(db, user.id);
+    return replyCard(interaction, { title: 'Admin promoted', description: `Promoted <@${user.id}> to SUPER.` });
   }
   else if (sub === 'demote') {
     await requireSuper(interaction);
@@ -179,8 +153,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     ensureAdminAttached(db);
     // Demote: remove from global super list
     db.prepare(`DELETE FROM admin.super_admins WHERE user_id = ?`).run(user.id);
-    await interaction.reply({ content: `Demoted <@${user.id}> to ADMIN.` });
-    return;
+    return replyCard(interaction, { title: 'Admin demoted', description: `Demoted <@${user.id}> from SUPER.` });
   }
   else if (sub === 'remove') {
     await requireSuper(interaction);
@@ -208,12 +181,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     const user = interaction.options.getUser('user', true);
-    let amountNum = interaction.options.getInteger('amount', true);
-    if (amountNum <= 0) { await interaction.reply({ content: 'Amount must be positive.' }); return; }
+    const { getParsedAmount } = await import('../../interactions/options.js');
+    const parsed = await getParsedAmount(interaction, 'amount');
+    if (parsed.value <= 0n) { await interaction.reply({ content: 'Amount must be positive.' }); return; }
 
     // Clamp to per-guild max-admin-grant cap (default 1B)
     const cap = getMaxAdminGrant(interaction.guildId!);
-    let requested = BigInt(amountNum);
+    let requested = parsed.value;
     let clamped = false;
     if (requested > cap) { requested = cap; clamped = true; }
 
@@ -247,7 +221,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // Acknowledge + respond safely regardless of prior defer/reply state
     const embeds = [embed] as any[];
     if (clamped) {
-      const warn = okCard({ title: '⚠️ Grant Capped', description: `Amount clamped to maximum grant of **${fmtCoins(cap)}**` });
+      const warn = okCard({ title: '⚠️ Grant Capped', description: `Amount clamped to maximum grant of **${formatBalance(cap)}**` });
       embeds.unshift(warn);
     }
     await safeReply(interaction as any, { embeds, components: [] } as any);
@@ -304,59 +278,56 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       await interaction.reply({ flags: MessageFlags.Ephemeral, content: 'Failed to remove super admin (ERR-ADMIN-REMOVE).' }).catch(() => { });
     }
   } else if (sub === 'list') {
-    // Public: visible to everyone
     const db = getGuildDb(interaction.guildId!);
     ensureAdminAttached(db);
-    const supers = getSupers(db).map(r => `<@${r.user_id}>`);
-    const guildAdmins = getPerGuildAdmins(db, interaction.guildId!).map(r => `<@${r.user_id}>`);
-    // Build embed inline to avoid stale caches
-    const eb = themedEmbed(getGuildTheme(interaction.guildId), 'Admins', '')
-      .addFields(
-        { name: 'Global SUPER', value: supers.length ? supers.join('\n') : '(none)' },
-        { name: 'Guild ADMIN', value: guildAdmins.length ? guildAdmins.join('\n') : '(none)' },
-      );
-    await interaction.reply({ embeds: [eb] });
+    const supers = getSupers(db).map(r => r.user_id).filter(id => isValidSnowflake(id));
+    const adminsRaw = getPerGuildAdmins(db, interaction.guildId!).map(r => r.user_id).filter(id => isValidSnowflake(id));
+    const admins = adminsRaw.filter(id => !supers.includes(id));
+    return replyCard(interaction, {
+      title: 'Admin Roster',
+      fields: [
+        { name: 'SUPER Admins', value: supers.length ? supers.map(id => `• <@${id}>`).join('\n') : '_none_' },
+        { name: 'Guild Admins', value: admins.length ? admins.map(id => `• <@${id}>`).join('\n') : '_none_' }
+      ]
+    });
   } else if (sub === 'whoami') {
     const db = getGuildDb(interaction.guildId!);
     ensureAdminAttached(db);
     const role = storeIsSuper(db, interaction.user.id)
       ? 'super'
       : (storeIsGuildAdmin(db, interaction.guildId!, interaction.user.id) ? 'admin' : 'user');
-    const theme = getGuildTheme(interaction.guildId);
-    const card = await generateCard({ layout: 'Notice', theme, payload: { title: 'Role', message: `You are ${role}.` } });
-    const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-    const embed = themedEmbed(theme, 'Who Am I', `Role: ${role}`).setImage(`attachment://${card.filename}`);
-    await interaction.reply({ embeds: [embed], files: [file] });
+    return replyCard(interaction, {
+      title: 'Admin · Who Am I',
+      description: `Invoker: <@${interaction.user.id}>\nRole: ${role}`
+    });
   } else if (sub === 'reboot') {
     await requireAdmin(interaction);
-    const theme = getGuildTheme(interaction.guildId);
-    const now = Date.now();
-    const customId = `admin:reboot:confirm:${interaction.user.id}:${now}`;
-    const embed = themedEmbed(theme, 'Confirm Reboot', '⚠️ This will restart the bot for all servers.\nPress confirm within 10 seconds.');
-    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      new ButtonBuilder().setCustomId(customId).setStyle(ButtonStyle.Danger).setLabel('Confirm Reboot'),
-    );
-    await respondOnce(interaction, () => ({ flags: MessageFlags.Ephemeral, embeds: [embed], components: [row] }));
+    // Mark reboot return channel for confirmation
+    try { await setRebootMarker({ guildId: interaction.guildId!, channelId: interaction.channelId }); } catch {}
+    await replyCard(interaction, { title: 'Rebooting…', description: 'The bot will restart shortly.' });
+    try { fs.writeFileSync('.reboot.flag', '1'); } catch {}
+    if (!isTestEnv()) { try { process.exit(0); } catch {} }
   }
   else if (sub === 'sync-commands') {
     await requireAdmin(interaction);
     const appId = process.env.APP_ID || process.env.DISCORD_APP_ID || process.env.CLIENT_ID;
     if (!appId) {
-      await interaction.reply({ flags: MessageFlags.Ephemeral, content: "Cannot sync commands: APP_ID missing. Set APP_ID or DISCORD_APP_ID (or CLIENT_ID)." }).catch(() => { });
+      await replyCard(interaction, { title: 'Command Sync', description: 'Cannot sync commands: APP_ID missing. Set APP_ID or DISCORD_APP_ID (or CLIENT_ID).' });
       return;
     }
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral }).catch(() => { });
+    await interaction.deferReply({ ephemeral: false }).catch(() => { });
     try {
       const rest = new REST({ version: "10" }).setToken(process.env.BOT_TOKEN!);
       const result = await syncAll(rest, interaction.client, log);
-      const theme = getGuildTheme(interaction.guildId);
-      const card = await buildCommandSyncCard(result, theme);
-      const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-      const embed = themedEmbed(theme, 'Command Sync', '').setImage(`attachment://${card.filename}`);
-      await interaction.editReply({ embeds: [embed], files: [file] });
+      const created = Number(result?.globalCount || 0);
+      const deleted = Number((result?.purged || []).reduce((a, b) => a + (b?.count || 0), 0) + (result?.purgedDisabled || 0) + (result?.purgedLegacyGlobal || 0));
+      await replyCard(interaction, {
+        title: 'Commands Synced',
+        description: `Created: **${created}**, Updated: **0**, Deleted: **${deleted}**`
+      });
     } catch (e: any) {
       log.error("admin_sync_error", "register", { err: String(e) });
-      await interaction.editReply("Sync failed (ERR-REGISTRAR).").catch(() => { });
+      await replyCard(interaction, { title: 'Command Sync', description: 'Sync failed (ERR-REGISTRAR).' });
     }
   }
   else if (sub === 'appinfo') {
@@ -421,11 +392,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     const user = interaction.options.getUser('user', true);
-    let amount = interaction.options.getInteger('amount', true);
-    if (amount <= 0) { await interaction.reply({ content: 'Amount must be positive.' }); return; }
+    const { getParsedAmount } = await import('../../interactions/options.js');
+    const parsed = await getParsedAmount(interaction, 'amount');
+    let amount = parsed.value;
+    if (amount <= 0n) { await interaction.reply({ content: 'Amount must be positive.' }); return; }
 
     // Clamp to max grant amount
-    const MAX_GRANT = parseInt(process.env.ADMIN_MAX_GRANT || '1000000000', 10);
+    const MAX_GRANT = BigInt(process.env.ADMIN_MAX_GRANT || '1000000000');
     if (amount > MAX_GRANT) {
       amount = MAX_GRANT;
       await interaction.reply({
@@ -437,7 +410,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
     const { getBalance, adjustBalance } = await import('../../economy/wallet.js');
     const current = getBalance(interaction.guildId!, user.id);
-    const want = BigInt(Math.trunc(amount));
+    const want = amount;
     const take = current < want ? current : want;
     const delta = -Number(take);
     const actualTaken = Number(take);
@@ -471,23 +444,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const why = interaction.options.getString('reason') ?? undefined;
     if (action === 'view') {
       const rows = listToggles();
-      const theme = getGuildTheme(interaction.guildId);
       const lines = rows.length
         ? rows.map((r) => `• /${r.name} — ${r.enabled ? 'enabled' : 'disabled'}${r.reason ? ` — ${r.reason}` : ''}`).join('\n')
         : '(none set, all enabled)';
-      const embed = themedEmbed(theme, 'Command Toggles', lines);
-      return interaction.reply({ flags: MessageFlags.Ephemeral, embeds: [embed] });
+      return replyCard(interaction, { title: 'Command Toggles', description: lines });
     }
-    if (!cmd) return interaction.reply({ flags: MessageFlags.Ephemeral, content: 'Provide a command name.' });
+    if (!cmd) return replyCard(interaction, { title: 'Toggles', description: 'Provide a command name.' });
     if (action === 'enable') {
       setToggle(cmd, true);
-      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `Enabled /${cmd}.` });
+      return replyCard(interaction, { title: 'Toggles Updated', description: `Enabled /${cmd}.` });
     }
     if (action === 'disable') {
       setToggle(cmd, false, why);
-      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `Disabled /${cmd}${why ? ` — ${why}` : ''}.` });
+      return replyCard(interaction, { title: 'Toggles Updated', description: `Disabled /${cmd}${why ? ` — ${why}` : ''}.` });
     }
-    return interaction.reply({ flags: MessageFlags.Ephemeral, content: 'Unknown action.' });
+    return replyCard(interaction, { title: 'Toggles', description: 'Unknown action.' });
   }
   else if (sub === 'reset') {
     await requireAdmin(interaction);
@@ -542,60 +513,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   else if (sub === 'ui') {
     await requireAdmin(interaction);
     const ctx = { guildDb: getGuildDb(interaction.guildId!) };
-    if (subsub === 'exact-mode') {
-      const mode = interaction.options.getString("mode", true) as any;
-      const scope = (interaction.options.getString("scope") || "guild") as "guild" | "user";
-      const user = interaction.options.getUser("user")?.id;
-      const key = scope === "user" && user ? `ui.show_exact_mode.user.${user}` : "ui.show_exact_mode";
-      setKV(ctx.guildDb, key, mode);
-      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `Exact mode set to ${mode} (${scope}).` });
-    }
     if (subsub === 'sigfigs') {
       const n = interaction.options.getInteger("n", true);
       setKV(ctx.guildDb, "ui.compact_sigfigs", String(n));
-      return interaction.reply({ flags: MessageFlags.Ephemeral, content: `Sig figs set to ${n}.` });
+      return replyCard(interaction, { title: 'UI · Sig Figs', description: `Sig figs set to ${n}.` });
     }
   }
 }
 
-export async function handleButton(interaction: ButtonInteraction) {
-  const [prefix, action, key, uid, ts] = interaction.customId.split(':');
-  if (prefix !== 'admin' || action !== 'reboot' || key !== 'confirm') return;
-  if (interaction.user.id !== uid) {
-    await safeReply(interaction, { content: 'This button is not for you.', flags: MessageFlags.Ephemeral });
-    return;
-  }
-  // cooldowns
-  const now = Date.now();
-  const gKey = `g:${interaction.guildId ?? 'dm'}`;
-  const uKey = `u:${interaction.user.id}`;
-  (global as any).__rebootCooldowns = (global as any).__rebootCooldowns || new Map<string, number>();
-  const map: Map<string, number> = (global as any).__rebootCooldowns;
-  if (map.get(gKey) && now - (map.get(gKey) as number) < 60_000) {
-    await safeReply(interaction, { content: 'Reboot recently initiated in this server. Please wait.', flags: MessageFlags.Ephemeral });
-    return;
-  }
-  if (map.get(uKey) && now - (map.get(uKey) as number) < 5_000) {
-    await safeReply(interaction, { content: 'Please wait a few seconds before confirming again.', flags: MessageFlags.Ephemeral });
-    return;
-  }
-  const pressedAt = Date.now();
-  const createdAt = parseInt(ts, 10);
-  if (!Number.isFinite(createdAt) || pressedAt - createdAt > 10_000) {
-    await safeReply(interaction, { content: 'Reboot confirmation expired. Please try again.', flags: MessageFlags.Ephemeral });
-    return;
-  }
-  // Double-check admin rights at confirm time
-  await requireAdmin(interaction);
-
-  try {
-    // Use deferUpdate to acknowledge button press without showing "interaction failed"
-    await interaction.deferUpdate().catch(() => { });
-    const theme = getGuildTheme(interaction.guildId);
-    const embed = themedEmbed(theme, 'Reboot Requested', 'Shutting down...');
-    await interaction.editReply({ embeds: [embed], components: [] }).catch(() => { });
-  } catch { }
-  map.set(gKey, now);
-  map.set(uKey, now);
-  await performReboot();
+export async function handleButton(_interaction: ButtonInteraction) {
+  // No-op: reboot confirmation button removed.
 }

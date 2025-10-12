@@ -29,8 +29,8 @@ import { toBigInt } from '../../utils/bigint.js';
 export const data = new SlashCommandBuilder()
   .setName('slots')
   .setDescription('Spin the 3x3 slots')
-  .addIntegerOption((opt) =>
-    opt.setName('bet').setDescription('Bet amount').setMinValue(1).setRequired(true),
+  .addStringOption((opt) =>
+    opt.setName('bet').setDescription('Bet amount (e.g., 2.5m, 1b)').setRequired(true),
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
@@ -38,14 +38,16 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   rememberUserChannel(interaction.guildId!, interaction.user.id, interaction.channelId);
   await safeDefer(interaction, false);
   try {
-    const bet = interaction.options.getInteger('bet', true);
+    const { getParsedAmount } = await import('../../interactions/options.js');
+    const parsed = await getParsedAmount(interaction as any, 'bet');
+    const bet = Number(parsed.value);
     const userId = interaction.user.id;
     const current = getBalance(interaction.guildId!, userId);
     // limits
     const db = getGuildDb(interaction.guildId!);
     const { minBet } = slotsLimits(db);
     // Centralized max bet guard
-    try { assertWithinMaxBet(db, toBigInt(bet)); } catch (e: any) {
+    try { assertWithinMaxBet(db, BigInt(parsed.value)); } catch (e: any) {
       if (e?.code === 'ERR_MAX_BET') {
         try { console.debug({ msg: 'bet_blocked', code: 'ERR_MAX_BET', guildId: interaction.guildId, userId, bet: String(bet) }); } catch {}
         return safeEdit(interaction, { content: e.message });
@@ -105,13 +107,22 @@ New balance: ${balText}${xpLine}`).setImage(
     );
     const betSelect = new StringSelectMenuBuilder()
       .setCustomId(`slots:betpreset:${userId}`)
-      .setPlaceholder('Quick bet sizes')
-      .addOptions(
-        new StringSelectMenuOptionBuilder().setLabel(`1% (${formatBolts(Math.max(1, Math.floor(Number(newBal) * 0.01)))})`).setValue(String(Math.max(1, Math.floor(Number(newBal) * 0.01)))),
-        new StringSelectMenuOptionBuilder().setLabel(`5% (${formatBolts(Math.max(1, Math.floor(Number(newBal) * 0.05)))})`).setValue(String(Math.max(1, Math.floor(Number(newBal) * 0.05)))),
-        new StringSelectMenuOptionBuilder().setLabel(`10% (${formatBolts(Math.max(1, Math.floor(Number(newBal) * 0.1)))})`).setValue(String(Math.max(1, Math.floor(Number(newBal) * 0.1)))),
-        new StringSelectMenuOptionBuilder().setLabel(`25% (${formatBolts(Math.max(1, Math.floor(Number(newBal) * 0.25)))})`).setValue(String(Math.max(1, Math.floor(Number(newBal) * 0.25)))),
+      .setPlaceholder('Quick bet sizes');
+    // Build unique preset bet options to avoid duplicate values
+    const base = Number(newBal);
+    const presets: Array<{ pct: number; val: number }> = [0.01, 0.05, 0.1, 0.25]
+      .map(p => ({ pct: p, val: Math.max(1, Math.floor(base * p)) }))
+      .filter(x => Number.isFinite(x.val));
+    const seen = new Set<number>();
+    for (const x of presets) {
+      if (seen.has(x.val)) continue;
+      seen.add(x.val);
+      betSelect.addOptions(
+        new StringSelectMenuOptionBuilder()
+          .setLabel(`${Math.round(x.pct * 100)}% (${formatBolts(x.val)})`)
+          .setValue(String(x.val))
       );
+    }
     return safeEdit(interaction, { embeds: [embed], files: [file], components: [primary, new Row<any>().addComponents(betSelect as any)] });
   } catch (e: any) {
     return replyError(interaction, "ERR-SLOTS", console, { err: String(e) });

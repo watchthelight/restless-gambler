@@ -184,7 +184,6 @@ const EXT: Record<string, Omit<HelpDoc, "name">> = {
       "/admin list-commands",
       "/admin force-purge",
       "/admin refresh-status",
-      "/admin ui exact-mode mode:<off|inline|on_click> [scope:<guild|user>] [user:<user>]",
       "/admin ui sigfigs n:<3-5>",
     ],
     examples: [

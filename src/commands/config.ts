@@ -2,12 +2,13 @@ import { SlashCommandBuilder, ChatInputCommandInteraction, PermissionsBitField, 
 import { getGuildDb } from '../db/connection.js';
 import { getSetting, getSettingNum, setSetting } from '../db/kv.js';
 import { makePublicAdmin } from './util/adminBuilder.js';
-import { parseHumanAmount, setMaxBetDisabled, setMaxBetValue, getMaxBet } from '../config/maxBet.js';
+import { parseHumanAmount as parseMaxBetAmount, setMaxBetDisabled, setMaxBetValue, getMaxBet } from '../config/maxBet.js';
 import { jsonStringifySafeBigint } from '../utils/json.js';
 import { ensurePublicDefer, channelFallback } from '../lib/publicReply.js';
 import { okCard, errorCard } from '../ui/cards.js';
 import { getMaxAdminGrant, setMaxAdminGrant, ECONOMY_LIMITS } from '../config/economy.js';
-import { parseAmount, fmtCoins } from '../lib/amount.js';
+import { parseHumanAmount, fmtCoins } from '../lib/amount.js';
+import { amountErrorEmbed } from '../interactions/errors/amount.js';
 import { requireAdmin } from '../admin/guard.js';
 import { logInfo, logError } from '../utils/logger.js';
 
@@ -143,7 +144,14 @@ export async function handleConfig(interaction: ChatInputCommandInteraction) {
       const prev = getMaxAdminGrant(interaction.guildId);
       let amount: bigint;
       try {
-        amount = parseAmount(value);
+        const parsedAmount = parseHumanAmount(value);
+        if (!('value' in parsedAmount)) {
+          const emb = amountErrorEmbed(parsedAmount, { command: 'config' });
+          await channelFallback(interaction, { embeds: [emb] } as any);
+          logError('config set economy.max_admin_grant failed', { guild: { id: interaction.guildId!, name: interaction.guild?.name }, channel: { id: interaction.channelId }, user: { id: interaction.user.id, tag: interaction.user.tag }, command: 'config', sub: 'set' }, new Error(parsedAmount.code));
+          return;
+        }
+        amount = parsedAmount.value;
       } catch {
         const err = errorCard({ command: 'config', type: 'BadInput', message: `Invalid amount. Allowed range: 0 … ${fmtCoins(ECONOMY_LIMITS.MAX)}.`, errorId: 'NA' });
         await channelFallback(interaction, { embeds: [err] } as any);
@@ -188,7 +196,7 @@ export async function handleConfig(interaction: ChatInputCommandInteraction) {
         return;
       }
       try {
-        const limit = parseHumanAmount(raw);
+        const limit = parseMaxBetAmount(raw);
         setMaxBetValue(db, limit);
         try { db.prepare('INSERT INTO audit_log(json) VALUES(?)').run(jsonStringifySafeBigint({ msg: 'config_set', key: 'max_bet', value: limit.toString(), guildId: interaction.guildId, admin: interaction.user.id })); } catch {}
         await interaction.reply({ content: `Max bet set to ${limit.toString()}.` });

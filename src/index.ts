@@ -120,6 +120,18 @@ async function main() {
 
     // Start hourly rank schedulers (buff cleanup)
     try { startRankSchedulers(client); } catch { }
+
+    // If restarted via /admin reboot, confirm once on return
+    try {
+      const { consumeRebootMarker } = await import('./admin/rebootMarker.js');
+      const marker = await consumeRebootMarker();
+      if (marker) {
+        try {
+          const ch: any = await client.channels.fetch(marker.channelId);
+          if (ch?.isTextBased?.()) await ch.send('Reboot complete.');
+        } catch { }
+      }
+    } catch { }
   });
   let shuttingDown = false;
 

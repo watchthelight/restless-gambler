@@ -40,9 +40,9 @@ export const data = new SlashCommandBuilder()
     s
       .setName('apply')
       .setDescription('Apply for a loan')
-      .addIntegerOption((o) => o.setName('amount').setDescription('Requested amount in bolts').setRequired(true).setMinValue(50).setMaxValue(1_000_000)),
+      .addStringOption((o) => o.setName('amount').setDescription('Requested amount (e.g., 10k, 2.5m)').setRequired(true)),
   )
-  .addSubcommand((s) => s.setName('pay').setDescription('Make a payment').addIntegerOption(o => o.setName('amount').setDescription('Payment amount').setRequired(true).setMinValue(1)))
+  .addSubcommand((s) => s.setName('pay').setDescription('Make a payment').addStringOption(o => o.setName('amount').setDescription('Payment amount (e.g., 10k)').setRequired(true)))
   .addSubcommandGroup((g) =>
     g
       .setName('reminders')
@@ -105,7 +105,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   if (sub === 'pay') {
     await safeDefer(interaction, { ephemeral: false });
-    const amount = interaction.options.getInteger('amount', true);
+    const { getParsedAmount } = await import('../../interactions/options.js');
+    const parsed = await getParsedAmount(interaction as any, 'amount');
+    const amount = Number(parsed.value);
     const active = getActiveLoans(guildId, userId);
     if (!active.length) { await interaction.editReply({ content: 'You have no loans.' }); return; }
     // Oldest
@@ -156,7 +158,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   }
 
   if (sub === 'apply') {
-    const amount = interaction.options.getInteger('amount', true);
+    const { getParsedAmount: getParsedAmount2 } = await import('../../interactions/options.js');
+    const parsed2 = await getParsedAmount2(interaction as any, 'amount');
+    const amount = Number(parsed2.value);
     await interaction.reply({ content: `📝 Reviewing your application for ${formatBolts(amount)}...` });
     const credit = getScore(guildId, userId);
     try { console.log(JSON.stringify({ msg: 'loan_apply_open', userId, amount, credit, guildId })); } catch { }

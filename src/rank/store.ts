@@ -164,11 +164,14 @@ export function getLuckBuff(guildId: string, userId: string): LuckBuff | null {
   const db = getGuildDb(guildId);
   const row = db
     .prepare("SELECT luck_bps, granted_at, expires_at FROM user_buffs WHERE user_id=?")
-    .get(userId) as LuckBuff | undefined;
+    .get(userId) as any;
 
   if (!row) return null;
-  if (row.expires_at <= Date.now()) return null;
-  return row;
+  const luck_bps = Number(row.luck_bps);
+  const granted_at = Number(row.granted_at);
+  const expires_at = Number(row.expires_at);
+  if (!Number.isFinite(expires_at) || expires_at <= Date.now()) return null;
+  return { luck_bps, granted_at, expires_at };
 }
 
 /**

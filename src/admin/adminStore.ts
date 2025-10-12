@@ -120,6 +120,28 @@ export function isAdminInGuild(db: Database, guildId: string, userId: string): b
 
 export function listAdminsForGuild(db: Database, guildId: string): { superIds: string[]; adminIds: string[] } {
   const supers = getSupers(db).map(r => r.user_id);
-  const admins = getPerGuildAdmins(db, guildId).map(r => r.user_id);
+  const admins = getPerGuildAdmins(db, guildId).map(r => r.user_id).filter(id => !supers.includes(id));
   return { superIds: supers, adminIds: admins };
+}
+
+export function promoteToSuper(db: Database, userId: string): void {
+  const uid = normalizeId(userId);
+  try { (db as any).transaction(() => {
+    try { db.prepare(`DELETE FROM admin.guild_admins WHERE user_id = ?`).run(uid); } catch { }
+    try { db.prepare(`INSERT OR IGNORE INTO admin.super_admins(user_id) VALUES(?)`).run(uid); } catch { }
+    try { db.prepare(`DELETE FROM admin_users WHERE user_id = ? AND role='admin'`).run(uid); } catch { }
+    try { db.prepare(`INSERT OR IGNORE INTO admin_users(user_id, role, guild_id) VALUES(?, 'super', NULL)`).run(uid); } catch { }
+  })(); } catch { }
+}
+
+export function superAdmins(db: Database): string[] {
+  return getSupers(db).map(r => r.user_id).filter(id => /^\d{17,20}$/.test(String(id)));
+}
+
+export function guildAdmins(db: Database, guildId: string): string[] {
+  const supers = superAdmins(db);
+  return getPerGuildAdmins(db, guildId)
+    .map(r => r.user_id)
+    .filter(id => /^\d{17,20}$/.test(String(id)))
+    .filter(id => !supers.includes(id));
 }

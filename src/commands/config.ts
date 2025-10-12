@@ -147,7 +147,7 @@ export async function handleConfig(interaction: ChatInputCommandInteraction) {
       } catch {
         const err = errorCard({ command: 'config', type: 'BadInput', message: `Invalid amount. Allowed range: 0 … ${fmtCoins(ECONOMY_LIMITS.MAX)}.`, errorId: 'NA' });
         await channelFallback(interaction, { embeds: [err] } as any);
-        logError('config set economy.max_admin_grant failed', { guild: { id: interaction.guildId!, name: interaction.guild?.name }, channel: { id: interaction.channelId }, user: { id: interaction.user.id, tag: interaction.user.tag }, command: 'config', sub: 'set' }, { reason: 'bad_amount', value });
+        logError('config set economy.max_admin_grant failed', { guild: { id: interaction.guildId!, name: interaction.guild?.name }, channel: { id: interaction.channelId }, user: { id: interaction.user.id, tag: interaction.user.tag }, command: 'config', sub: 'set' }, new Error('bad_amount'));
         return;
       }
       if (amount < 0n || amount > ECONOMY_LIMITS.MAX) {

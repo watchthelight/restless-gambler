@@ -4,10 +4,10 @@ import {
   type ButtonInteraction,
   type AnySelectMenuInteraction,
   type ModalSubmitInteraction,
-  EmbedBuilder,
-  Colors,
 } from 'discord.js';
 import { randomBytes } from 'node:crypto';
+import { ensurePublicDefer, channelFallback } from './publicReply.js';
+import { errorCard } from '../ui/cards.js';
 
 export type AnyIx =
   | ChatInputCommandInteraction
@@ -20,12 +20,7 @@ export function newErrorId() {
 }
 
 export function buildPublicErrorEmbed(title: string, message: string, errorId: string) {
-  return new EmbedBuilder()
-    .setColor(Colors.Red)
-    .setTitle(`❌ ${title}`)
-    .setDescription(message)
-    .addFields({ name: 'Error ID', value: `\`${errorId}\`` })
-    .setTimestamp();
+  return errorCard({ command: title.replace(/ failed$/i, ''), type: 'Error', message, errorId });
 }
 
 /**
@@ -35,19 +30,8 @@ export function buildPublicErrorEmbed(title: string, message: string, errorId: s
  * - Final fallback: followUp (public).
  * Swallows secondary InteractionNotReplied errors.
  */
-export async function sendPublicError(ix: AnyIx, opts: { title: string; message: string; errorId: string }) {
+export async function sendPublicError(ix: AnyIx, opts: { title: string; message: string; errorId: string; details?: string }) {
   const embed = buildPublicErrorEmbed(opts.title, opts.message, opts.errorId);
-  try {
-    if (!ix.deferred && !ix.replied) {
-      // public by default
-      await ix.reply({ embeds: [embed] });
-      return;
-    }
-    // Already acked -> prefer editReply; fall back to followUp
-    await (ix as any).editReply?.({ embeds: [embed] });
-  } catch {
-    // Final fallback (rare race) – try followUp
-    try { await (ix as any).followUp?.({ embeds: [embed] }); } catch {}
-  }
+  try { await ensurePublicDefer(ix as any); } catch {}
+  await channelFallback(ix as any, { embeds: [embed] } as any);
 }
-

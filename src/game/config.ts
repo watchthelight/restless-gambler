@@ -69,15 +69,9 @@ export function validateBet(bet: number, limits: { minBet: number; maxBet: numbe
 }
 
 // Common safe-ack helpers for interactions
-export async function safeDefer(interaction: any, ephemeral = true) {
+export async function safeDefer(interaction: any, _ephemeral = true) {
   try {
-    if (interaction.isButton?.() || interaction.isStringSelectMenu?.() || interaction.isAnySelectMenu?.()) {
-      if (!interaction.deferred && !interaction.replied) await interaction.deferUpdate();
-    } else {
-      const flags = ephemeral ? (MessageFlags as any)?.Ephemeral : undefined;
-      // Avoid locking visibility to ephemeral for generic defers: prefer public when possible
-      if (!interaction.deferred && !interaction.replied) await interaction.deferReply(ephemeral ? ({ flags } as any) : ({} as any));
-    }
+    if (!interaction.deferred && !interaction.replied) await interaction.deferReply({ ephemeral: false });
   } catch {}
 }
 

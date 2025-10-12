@@ -29,6 +29,9 @@ import { auditLog, type AdminAuditEvent } from '../../util/audit.js';
 import { setWhitelistMode, releaseWhitelist } from '../../db/commandControl.js';
 import { jsonStringifySafeBigint } from '../../utils/json.js';
 import { logInfo, logError } from '../../utils/logger.js';
+import { getMaxAdminGrant } from '../../config/economy.js';
+import { fmtCoins } from '../../lib/amount.js';
+import { okCard } from '../../ui/cards.js';
 
 export async function performReboot(): Promise<void> {
   // In tests, DO NOT schedule timers or exit the process.
@@ -205,26 +208,21 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     }
 
     const user = interaction.options.getUser('user', true);
-    let amount = interaction.options.getInteger('amount', true);
-    if (amount <= 0) { await interaction.reply({ content: 'Amount must be positive.' }); return; }
+    let amountNum = interaction.options.getInteger('amount', true);
+    if (amountNum <= 0) { await interaction.reply({ content: 'Amount must be positive.' }); return; }
 
-    // Clamp to max grant amount (default 1B)
-    const MAX_GRANT = parseInt(process.env.ADMIN_MAX_GRANT || '1000000000', 10);
-    if (amount > MAX_GRANT) {
-      amount = MAX_GRANT;
-      await interaction.reply({
-        content: `Amount clamped to maximum grant of ${formatBolts(MAX_GRANT)}.`,
-        flags: MessageFlags.Ephemeral
-      });
-      return;
-    }
+    // Clamp to per-guild max-admin-grant cap (default 1B)
+    const cap = getMaxAdminGrant(interaction.guildId!);
+    let requested = BigInt(amountNum);
+    let clamped = false;
+    if (requested > cap) { requested = cap; clamped = true; }
 
     // Audit log
     auditLog({
       action: 'admin_give',
       adminUserId: interaction.user.id,
       targetUserId: user.id,
-      amount,
+      amount: Number(requested),
       timestamp: Date.now(),
       guildId: interaction.guildId!,
     });
@@ -234,20 +232,25 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     // ensure user exists even if current=0
     const { getUserMeta } = await import('../../util/userMeta.js');
     await getUserMeta(interaction.client, interaction.guildId!, user.id);
-    const newBal = await adjustBalance(interaction.guildId!, user.id, amount, 'admin:give');
-    await safeDefer(interaction);
+    const newBal = await adjustBalance(interaction.guildId!, user.id, requested, 'admin:give');
     const pretty = formatBalance(newBal);
     const exact = formatExact(newBal);
-    const embed = walletEmbed({ title: 'Funds Added', headline: `${user.tag} +${formatBolts(amount)}. New balance:`, pretty, exact });
-    console.log(JSON.stringify({ msg: 'admin_action', action: 'give', target: user.id, amount: amount, admin: interaction.user.id, guildId: interaction.guildId }));
+    const embed = walletEmbed({ title: 'Funds Added', headline: `${user.tag} +${formatBolts(requested)}. New balance:`, pretty, exact });
+    console.log(JSON.stringify({ msg: 'admin_action', action: 'give', target: user.id, amount: String(requested), admin: interaction.user.id, guildId: interaction.guildId }));
     logInfo('granted currency', {
       guild: { id: interaction.guildId!, name: interaction.guild?.name },
       channel: { id: interaction.channelId },
       user: { id: interaction.user.id, tag: interaction.user.tag },
       command: 'admin',
       sub: 'give'
-    }, { targetUser: user.id, amount, newBalance: String(newBal) });
-    await interaction.editReply({ embeds: [embed], components: [] });
+    }, { targetUser: user.id, amount: String(requested), newBalance: String(newBal), clamped, cap: String(cap) });
+    // Acknowledge + respond safely regardless of prior defer/reply state
+    const embeds = [embed] as any[];
+    if (clamped) {
+      const warn = okCard({ title: '⚠️ Grant Capped', description: `Amount clamped to maximum grant of **${fmtCoins(cap)}**` });
+      embeds.unshift(warn);
+    }
+    await safeReply(interaction as any, { embeds, components: [] } as any);
   }
   else if (sub === 'whitelist') {
     await requireAdmin(interaction);

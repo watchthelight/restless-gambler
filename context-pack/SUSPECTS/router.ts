@@ -42,8 +42,7 @@ export function initInteractionRouter(client: Client) {
             const t = setTimeout(async () => {
                 if (!i.deferred && !i.replied) {
                     acknowledged = true;
-                    const publicMode = VISIBILITY_MODE === 'public';
-                    await i.deferReply(publicMode ? {} : { flags: MessageFlags.Ephemeral }).catch(() => { });
+                    await i.deferReply({}).catch(() => { });
                     ; (i as any).__autoDeferred = true;
                 }
             }, 1500);
@@ -51,7 +50,7 @@ export function initInteractionRouter(client: Client) {
             try {
                 const cmd = getSlashCommands().find((c) => c.name === name);
                 if (!cmd) {
-                    if (!acknowledged && !i.replied && !i.deferred) await i.reply({ content: 'Unknown command.', ephemeral: true }).catch(() => { });
+                    if (!acknowledged && !i.replied && !i.deferred) await i.reply({ content: 'Unknown command.' }).catch(() => { });
                     else if (i.deferred && !i.replied) await i.editReply({ content: 'Unknown command.' }).catch(() => { });
                     return;
                 }
@@ -59,7 +58,7 @@ export function initInteractionRouter(client: Client) {
             } catch (e) {
                 console.error(JSON.stringify({ msg: 'handler_error', name: i.commandName, error: String(e) }));
                 logPermError(e, i);
-                if (!acknowledged && !i.replied && !i.deferred) await i.reply(VISIBILITY_MODE === 'public' ? { content: 'Something went wrong. Try again.' } : { content: 'Something went wrong. Try again.', flags: MessageFlags.Ephemeral }).catch(() => { });
+                if (!acknowledged && !i.replied && !i.deferred) await i.reply({ content: 'Something went wrong. Try again.' }).catch(() => { });
                 else if (i.deferred && !i.replied) await i.editReply({ content: 'Sorry, something went wrong.' }).catch(() => { });
             } finally {
                 clearTimeout(t);

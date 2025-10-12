@@ -11,6 +11,8 @@ import { themedEmbed as themed, categoryEmoji } from "../../ui/embeds.js";
 import { getGuildDb } from "../../db/connection.js";
 import { isAdmin as hasAdmin, isSuperAdmin as hasSuper } from "../../admin/permissions.js";
 import { send } from "../../ui/reply.js";
+import { ensurePublicDefer, replyPublic } from "../../lib/publicReply.js";
+import { errorCard } from "../../ui/cards.js";
 
 export const data = new SlashCommandBuilder()
   .setName("help")
@@ -128,7 +130,9 @@ export async function run(interaction: ChatInputCommandInteraction) {
     const doc = getDocByName(name);
     const isAdmin = isAdminView(interaction);
     if (!doc || (!isAdmin && ADMIN_COMMANDS.has(doc.name))) {
-      await send(interaction, { content: `No help found for \`${name}\`.`, ephemeral: true });
+      const card = errorCard({ command: 'help', type: 'NotFound', message: `No help found for \`${name}\`.`, errorId: 'NA' });
+      await ensurePublicDefer(interaction as any);
+      await replyPublic(interaction as any, { embeds: [card] });
       return;
     }
 

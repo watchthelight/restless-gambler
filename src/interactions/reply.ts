@@ -17,14 +17,10 @@ export async function safeReply(interaction: any, opts: InteractionReplyOptions)
   }
 }
 
-export async function safeDefer(interaction: any, opts?: { ephemeral?: boolean }) {
+export async function safeDefer(interaction: any, _opts?: { ephemeral?: boolean }) {
   if (interaction.deferred || interaction.replied) return;
-  const flags = opts?.ephemeral ? MessageFlags.Ephemeral : undefined;
   try {
-    if (interaction.isButton?.() || interaction.isStringSelectMenu?.() || interaction.isAnySelectMenu?.()) {
-      return await interaction.deferUpdate();
-    }
-    return await interaction.deferReply(flags !== undefined ? { flags } : {});
+    return await interaction.deferReply({ ephemeral: false });
   } catch {}
 }
 

@@ -1,6 +1,6 @@
 import type { BaseInteraction } from 'discord.js';
-import { themedEmbed } from '../ui/embeds.js';
-import { send } from '../ui/reply.js';
+import { ensurePublicDefer, replyPublic } from '../lib/publicReply.js';
+import { errorCard } from '../ui/cards.js';
 import { getGuildDb, getGlobalAdminDb } from '../db/connection.js';
 import { ensureAttached, isSuper as storeIsSuper, isGuildAdmin as storeIsGuildAdmin } from './adminStore.js';
 
@@ -23,11 +23,9 @@ export async function requireAdmin(interaction: BaseInteraction) {
   }
   if (!ok) {
     try { console.warn(JSON.stringify({ msg: 'admin_check_miss', guildId: gid, userId: uid })); } catch { }
-    const emb = themedEmbed('error', 'Access Denied', 'You don\u2019t have permission to use this command.', undefined, {
-      user: (interaction as any).user ?? null,
-      guildName: (interaction as any).guild?.name ?? null,
-    });
-    await send(interaction as any, { embeds: [emb], ephemeral: true });
+    const card = errorCard({ command: 'admin', type: 'AccessDenied', message: 'You don\u2019t have permission to use this command.', errorId: 'NA' });
+    await ensurePublicDefer(interaction as any as any);
+    await replyPublic(interaction as any, { embeds: [card] });
     throw new AuthzError();
   }
 }
@@ -50,11 +48,9 @@ export async function requireSuper(interaction: BaseInteraction) {
     } catch { ok = false; }
   }
   if (!ok) {
-    const emb = themedEmbed('error', 'Access Denied', 'Super admin required.', undefined, {
-      user: (interaction as any).user ?? null,
-      guildName: (interaction as any).guild?.name ?? null,
-    });
-    await send(interaction as any, { embeds: [emb], ephemeral: true });
+    const card = errorCard({ command: 'admin', type: 'AccessDenied', message: 'Super admin required.', errorId: 'NA' });
+    await ensurePublicDefer(interaction as any as any);
+    await replyPublic(interaction as any, { embeds: [card] });
     throw new AuthzError();
   }
 }

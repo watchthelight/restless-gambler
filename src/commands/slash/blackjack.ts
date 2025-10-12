@@ -32,6 +32,9 @@ import { getSetting } from '../../db/kv.js';
 import { dbToBigint, bigintToDb, toBigInt } from '../../utils/bigint.js';
 import type { RNG } from '../../util/rng.js';
 import { logInfo, logError } from '../../utils/logger.js';
+import { ensurePublicDefer, replyPublic } from '../../lib/publicReply.js';
+import { errorCard } from '../../ui/cards.js';
+import { buildErrorId } from '../../utils/errors.js';
 
 type SessionRow = {
   id: number;
@@ -225,8 +228,26 @@ export async function execute(i: ChatInputCommandInteraction) {
       const db = getGuildDb(guildId);
       const mode = uiExactMode(db, "guild");
       const sig = uiSigFigs(db);
-      const balText = mode === "inline" ? renderAmountInline(bal, sig) : formatBolts(bal);
-      await i.reply({ content: `Insufficient balance (${balText}).` }); return;
+      const fmt = (v: number | bigint) => mode === "inline" ? renderAmountInline(v as any, sig) : formatBolts(v);
+      const required = bet;
+      const shortfall = (BigInt(required) - bal);
+      const fields = [
+        { name: 'Current balance', value: fmt(bal), inline: true },
+        { name: 'Required bet', value: fmt(required), inline: true },
+        { name: 'Shortfall', value: fmt(shortfall), inline: true },
+      ];
+      await ensurePublicDefer(i as any);
+      const card = errorCard({
+        command: 'blackjack start',
+        type: 'InsufficientBalance',
+        message: 'You don’t have enough to place that bet.',
+        errorId: buildErrorId(),
+        details: '',
+        titleOverride: '♠️ Blackjack — Insufficient balance',
+      });
+      card.addFields(fields).setFooter({ text: 'Try /daily or /admin give (admins)' });
+      await replyPublic(i as any, { embeds: [card] });
+      return;
     }
     // Prevent concurrent session
     const active = loadActive(guildId, userId);

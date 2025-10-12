@@ -54,3 +54,31 @@ System.IO.TextWriter*
 !README.md
 !LICENSE
 !LICENSE.md
+# === dev-only / local helper stuff (not needed at runtime) ===
+# tooling & docs
+.eslintrc.cjs
+.prettierrc
+README.md
+
+# tests & artifacts
+jest.config.mjs
+jest.setup.js
+tests/
+test_output.txt
+
+# local helper / maintenance scripts
+Start.ps1
+Rebuild-And-Run.cmd
+rebuild.cmd
+startCLI.cmd
+startGUI.cmd
+refresh-all.ps1
+kill-node-tree.ps1
+logpull.ps1
+check_tables.js
+repair-guilds.cjs
+temp_router.txt
+
+# docker (ignore if not using Docker)
+Dockerfile
+docker-compose.yml

@@ -19,7 +19,7 @@ type NoticePayload = { title: string; message: string };
 
 type WalletPayload = { balance: number | bigint; title?: string; subtitle?: string };
 
-type SyncPayload = { globalCount: number; perGuild: Array<{ guildId: string; purged: number }>; };
+type SyncPayload = { globalCount: number; perGuild: Array<{ guildId: string; purged: number }>; purgedGlobal?: number };
 
 type LoanView = {
   id: string;
@@ -305,6 +305,8 @@ function renderWallet(ctx: any, opts: Extract<CardOpts, { layout: 'Wallet' }>) {
 function renderSync(ctx: any, opts: Extract<CardOpts, { layout: 'Sync' }>) {
   const { payload, theme } = opts;
   let message = `global: ${payload.globalCount}\n`;
+  const pg = typeof payload.purgedGlobal === 'number' ? payload.purgedGlobal : 0;
+  message += `Purged global: ${pg}\n`;
   if (payload.perGuild.length === 0) {
     message += 'Purged per-guild: none';
   } else {
@@ -391,8 +393,8 @@ export async function sendChannelCard(
   } catch { /* ignore send errors */ }
 }
 
-export async function buildCommandSyncCard(result: { globalCount: number; purged: Array<{ guildId: string; count: number }>; purgedDisabled: number }, theme: Theme): Promise<{ buffer: Buffer; filename: string }> {
-  const res = { globalCount: result.globalCount, perGuild: result.purged.map(p => ({ guildId: p.guildId, purged: p.count })) };
+export async function buildCommandSyncCard(result: { globalCount: number; purged: Array<{ guildId: string; count: number }>; purgedDisabled: number; purgedLegacyGlobal?: number }, theme: Theme): Promise<{ buffer: Buffer; filename: string }> {
+  const res = { globalCount: result.globalCount, perGuild: result.purged.map(p => ({ guildId: p.guildId, purged: p.count })), purgedGlobal: result.purgedLegacyGlobal ?? 0 };
   return generateCard({ layout: 'Sync', theme, payload: res });
 }
 

@@ -34,6 +34,13 @@ export const data = makePublicAdmin(
             { name: 'rank_curve', value: 'rank_curve' },
             { name: 'rank_max_level', value: 'rank_max_level' },
             { name: 'rank_public_promotions', value: 'rank_public_promotions' },
+            { name: 'xp_enabled', value: 'xp_enabled' },
+            { name: 'xp_per_1000_wagered', value: 'xp_per_1000_wagered' },
+            { name: 'xp_flat_per_round', value: 'xp_flat_per_round' },
+            { name: 'xp_min_per_round', value: 'xp_min_per_round' },
+            { name: 'xp_max_per_round', value: 'xp_max_per_round' },
+            { name: 'xp_cap_per_minute', value: 'xp_cap_per_minute' },
+            { name: 'xp_cooldown_ms', value: 'xp_cooldown_ms' },
           ),
       )
       .addStringOption((o) => o.setName('value').setDescription('Value or theme preset').setRequired(true).setAutocomplete(false)),
@@ -62,6 +69,13 @@ export const data = makePublicAdmin(
             { name: 'rank_curve', value: 'rank_curve' },
             { name: 'rank_max_level', value: 'rank_max_level' },
             { name: 'rank_public_promotions', value: 'rank_public_promotions' },
+            { name: 'xp_enabled', value: 'xp_enabled' },
+            { name: 'xp_per_1000_wagered', value: 'xp_per_1000_wagered' },
+            { name: 'xp_flat_per_round', value: 'xp_flat_per_round' },
+            { name: 'xp_min_per_round', value: 'xp_min_per_round' },
+            { name: 'xp_max_per_round', value: 'xp_max_per_round' },
+            { name: 'xp_cap_per_minute', value: 'xp_cap_per_minute' },
+            { name: 'xp_cooldown_ms', value: 'xp_cooldown_ms' },
           ),
       ),
   );
@@ -141,6 +155,26 @@ export async function handleConfig(interaction: ChatInputCommandInteraction) {
       set('rank_max_level', v);
     } else if (key === 'rank_public_promotions') {
       set('rank_public_promotions', value === 'true' ? '1' : '0');
+    } else if (key === 'xp_enabled') {
+      set('xp_enabled', value === 'true' ? '1' : '0');
+    } else if (key === 'xp_per_1000_wagered') {
+      const v = String(Math.max(0, parseFloat(value) || 5));
+      set('xp_per_1000_wagered', v);
+    } else if (key === 'xp_flat_per_round') {
+      const v = String(Math.max(0, parseFloat(value) || 1));
+      set('xp_flat_per_round', v);
+    } else if (key === 'xp_min_per_round') {
+      const v = String(Math.max(0, Math.floor(parseInt(value, 10) || 1)));
+      set('xp_min_per_round', v);
+    } else if (key === 'xp_max_per_round') {
+      const v = String(Math.max(1, Math.floor(parseInt(value, 10) || 250)));
+      set('xp_max_per_round', v);
+    } else if (key === 'xp_cap_per_minute') {
+      const v = String(Math.max(1, Math.floor(parseInt(value, 10) || 500)));
+      set('xp_cap_per_minute', v);
+    } else if (key === 'xp_cooldown_ms') {
+      const v = String(Math.max(0, Math.floor(parseInt(value, 10) || 1500)));
+      set('xp_cooldown_ms', v);
     } else {
       await interaction.reply({ content: `Unknown key: ${key}`, flags: MessageFlags.Ephemeral });
       return;
@@ -180,6 +214,20 @@ export async function handleConfig(interaction: ChatInputCommandInteraction) {
       value = getSetting(db, 'rank_max_level') ?? '100';
     } else if (key === 'rank_public_promotions') {
       value = getSetting(db, 'rank_public_promotions') ?? '1';
+    } else if (key === 'xp_enabled') {
+      value = getSetting(db, 'xp_enabled') ?? 'true';
+    } else if (key === 'xp_per_1000_wagered') {
+      value = getSetting(db, 'xp_per_1000_wagered') ?? '5';
+    } else if (key === 'xp_flat_per_round') {
+      value = getSetting(db, 'xp_flat_per_round') ?? '1';
+    } else if (key === 'xp_min_per_round') {
+      value = getSetting(db, 'xp_min_per_round') ?? '1';
+    } else if (key === 'xp_max_per_round') {
+      value = getSetting(db, 'xp_max_per_round') ?? '250';
+    } else if (key === 'xp_cap_per_minute') {
+      value = getSetting(db, 'xp_cap_per_minute') ?? '500';
+    } else if (key === 'xp_cooldown_ms') {
+      value = getSetting(db, 'xp_cooldown_ms') ?? '1500';
     }
     await interaction.reply({ content: `${key} = ${value}`, flags: MessageFlags.Ephemeral });
   }

@@ -19,7 +19,8 @@ import { slotsLimits, safeDefer, safeEdit, replyError, uiExactMode, uiSigFigs } 
 import { renderAmountInline } from '../../util/amountRender.js';
 import { ensureGuildInteraction } from '../../interactions/guards.js';
 import { withUserLuck } from '../../rng/luck.js';
-import { onGambleXP } from '../../rank/xpEngine.js';
+import { awardGameXp } from '../../rank/xp.js';
+import { formatXpLine } from '../../ui/xpLine.js';
 import { rememberUserChannel } from '../../rank/announce.js';
 import { getSetting } from '../../db/kv.js';
 import { assertWithinMaxBet } from '../../config/maxBet.js';
@@ -78,8 +79,23 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const mode = uiExactMode(db, "guild");
     const sig = uiSigFigs(db);
     const balText = mode === "inline" ? renderAmountInline(newBal, sig) : formatBolt(newBal);
+
+    // Award XP for completed round
+    let xpLine = '';
+    try {
+      const grant = await awardGameXp(interaction.guildId!, userId, {
+        wager: BigInt(bet),
+        game: 'slots',
+        rounds: 1
+      });
+      const xpText = formatXpLine(grant);
+      if (xpText) {
+        xpLine = `\n${xpText}`;
+      }
+    } catch { }
+
     const embed = themedEmbed(theme, '🎰 Slots', `${headline}
-New balance: ${balText}`).setImage(
+New balance: ${balText}${xpLine}`).setImage(
       `attachment://${card.filename}`,
     );
 
@@ -96,12 +112,6 @@ New balance: ${balText}`).setImage(
         new StringSelectMenuOptionBuilder().setLabel(`10% (${formatBolts(Math.max(1, Math.floor(Number(newBal) * 0.1)))})`).setValue(String(Math.max(1, Math.floor(Number(newBal) * 0.1)))),
         new StringSelectMenuOptionBuilder().setLabel(`25% (${formatBolts(Math.max(1, Math.floor(Number(newBal) * 0.25)))})`).setValue(String(Math.max(1, Math.floor(Number(newBal) * 0.25)))),
       );
-    // XP grant once per completed round
-    try {
-      if (ranksEnabled) {
-        onGambleXP(interaction.guildId!, userId, bet, Number(newBal));
-      }
-    } catch { }
     return safeEdit(interaction, { embeds: [embed], files: [file], components: [primary, new Row<any>().addComponents(betSelect as any)] });
   } catch (e: any) {
     return replyError(interaction, "ERR-SLOTS", console, { err: String(e) });

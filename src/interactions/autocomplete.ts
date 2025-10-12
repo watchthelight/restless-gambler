@@ -1,7 +1,7 @@
 import { AutocompleteInteraction } from "discord.js";
 import { allCommandNamesIncludingDisabled } from "../registry/util-builders.js";
 import { isEnabled } from "../config/toggles.js";
-import * as Help from "../commands/slash/help.js";
+import * as HelpNew from "../commands/help/index.js";
 
 function score(needle: string, hay: string): number {
   const n = String(needle || "").toLowerCase();
@@ -15,7 +15,7 @@ function score(needle: string, hay: string): number {
 export async function handleAutocomplete(interaction: AutocompleteInteraction) {
   // Handle /help autocomplete
   if (interaction.commandName === "help") {
-    return Help.autocomplete(interaction);
+    return HelpNew.autocomplete(interaction);
   }
 
   // Handle /admin toggles autocomplete

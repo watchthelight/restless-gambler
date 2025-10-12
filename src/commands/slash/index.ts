@@ -1,6 +1,6 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder, SlashCommandOptionsOnlyBuilder, SlashCommandSubcommandsOnlyBuilder, PermissionFlagsBits } from 'discord.js';
 import * as Canary from './canary.js';
-import * as Help from './help.js';
+import * as HelpNew from '../help/index.js';
 import * as SlotsCmd from '../../games/slots/commands.js';
 import * as RouletteCmd from '../../games/roulette/commands.js';
 import * as BlackjackSlash from './blackjack.js';
@@ -21,8 +21,8 @@ import * as LoanAdminCmd from '../loan-admin/index.js';
 type Builder = SlashCommandBuilder | SlashCommandOptionsOnlyBuilder | SlashCommandSubcommandsOnlyBuilder;
 type Slash = { name: string; data: Builder; run: (i: ChatInputCommandInteraction) => Promise<void> };
 
-// Minimal help that responds immediately, no images
-const HelpSlash: Slash = { name: Help.data.name, data: Help.data as Builder, run: Help.run };
+// New help system with AmariBot-style cards
+const HelpSlash: Slash = { name: HelpNew.data.name, data: HelpNew.data as Builder, run: HelpNew.execute };
 
 // Dev demo (flat command) -> delegates to /dev demo
 const DevDemo: Slash = {

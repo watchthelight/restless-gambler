@@ -22,7 +22,7 @@
       "enabled": true
     },
     "canary": {
-      "enabled": true
+      "enabled": false
     },
     "config": {
       "enabled": true
@@ -79,6 +79,9 @@
       "enabled": true
     },
     "transfer": {
+      "enabled": true
+    },
+    "faucet": {
       "enabled": true
     }
   },

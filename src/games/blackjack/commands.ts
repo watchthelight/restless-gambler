@@ -11,7 +11,8 @@ import { outcomeMessage, formatBolt } from '../../ui/outcome.js';
 import { uiExactMode, uiSigFigs } from '../../game/config.js';
 import { renderAmountInline } from '../../util/amountRender.js';
 import { withUserLuck } from '../../rng/luck.js';
-import { onGambleXP } from '../../rank/xpEngine.js';
+import { awardGameXp } from '../../rank/xp.js';
+import { formatXpLine } from '../../ui/xpLine.js';
 import { rememberUserChannel } from '../../rank/announce.js';
 import { getSetting } from '../../db/kv.js';
 import { assertWithinMaxBet } from '../../config/maxBet.js';
@@ -150,16 +151,23 @@ export async function handleButton(interaction: ButtonInteraction) {
     const card = await generateCard({ layout: 'GameResult', theme, payload: { kind: 'blackjack', dealer: dealerCards, player: playerCards, bet: state.bet, payout, delta, balance: balanceNow } });
     const file = new AttachmentBuilder(card.buffer, { name: card.filename });
     const headline = delta > 0 ? outcomeMessage('win', delta) : delta < 0 ? outcomeMessage('loss', Math.abs(delta)) : outcomeMessage('push');
-    const final = themedEmbed(theme, '🂡 Blackjack Result', `${headline}
-New balance: ${balText}`).setImage(`attachment://${card.filename}`);
 
     // Award XP for completed hand
+    let xpLine = '';
     try {
-      const ranksEnabled = (getSetting(db, 'features.ranks.enabled') !== 'false');
-      if (ranksEnabled) {
-        onGambleXP(interaction.guildId, userId, state.bet, Number(balanceNow));
+      const grant = await awardGameXp(interaction.guildId, userId, {
+        wager: BigInt(state.bet),
+        game: 'blackjack',
+        rounds: 1
+      });
+      const xpText = formatXpLine(grant);
+      if (xpText) {
+        xpLine = `\n${xpText}`;
       }
     } catch { }
+
+    const final = themedEmbed(theme, '🂡 Blackjack Result', `${headline}
+New balance: ${balText}${xpLine}`).setImage(`attachment://${card.filename}`);
 
     clearState(interaction.guildId, interaction.channelId, userId);
     await interaction.reply({ embeds: [final], files: [file] });

@@ -12,6 +12,7 @@ import {
 // ...
 import { allCommandBuilders } from "./util-builders.js"; // create this if you don't have a central export
 import { loadConfig } from "../config/toggles.js";
+import { purgeGlobalLegacy, purgePerGuildLegacy } from "./purgeLegacy.js";
 
 export function buildCommands(): RESTPostAPIApplicationCommandsJSONBody[] {
     return allCommandBuilders().map(b => b.toJSON());
@@ -75,14 +76,22 @@ export async function syncAll(rest: REST, client: any, log: any = console) {
     }
     const cmds = buildCommands();
     const globalCount = await registerGlobal(rest, appId, cmds, log);
+    // Purge legacy/global unknowns (post-upsert to be safe and idempotent)
+    let purgedLegacyGlobal = 0;
+    try {
+        purgedLegacyGlobal = await purgeGlobalLegacy(client);
+    } catch { /* ignore purge errors */ }
+
     const purged: { guildId: string; count: number }[] = [];
     for (const [gid] of client.guilds.cache) {
         const count = await purgeGuildCommands(rest, appId, gid, 150, log);
         purged.push({ guildId: gid, count });
     }
+    // Optionally run per-guild legacy purge as well (safe no-ops if nothing extra)
+    try { await purgePerGuildLegacy(client); } catch { /* ignore */ }
     const purgedDisabled = await purgeDisabledGlobals(rest, appId, log);
-    log.info?.({ msg: "command_sync", global: globalCount, purged, purgedDisabled });
-    return { globalCount, purged, purgedDisabled };
+    log.info?.({ msg: "command_sync", global: globalCount, purged, purgedDisabled, purgedLegacyGlobal });
+    return { globalCount, purged, purgedDisabled, purgedLegacyGlobal };
 }
 
 export async function listGlobal(rest: REST) {

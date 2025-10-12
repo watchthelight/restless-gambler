@@ -1,0 +1,26 @@
+
+> play-money-casino-bot@0.1.0 test
+> cross-env NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.mjs --runInBand
+
+(node:15920) ExperimentalWarning: VM Modules is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+PASS tests/admin.perguild.test.ts
+  ● Console
+
+    console.debug
+      {
+        msg: 'open_admin_db',
+        file: 'd:\\restless-gambler\\data\\test-admins\\migration-test-1760276317161\\admin_legacy.db'
+      }
+
+      at openAdminDb (src/db/openAdminDb.ts:6:51)
+
+PASS tests/help.command.test.ts
+PASS tests/bigint.exact.test.ts
+
+D:\restless-gambler\node_modules\better-sqlite3\lib\methods\wrappers.js:9
+	this[cppdb].exec(sql);
+	            ^
+SqliteError { code: 'SQLITE_ERROR' }
+
+Node.js v20.18.1

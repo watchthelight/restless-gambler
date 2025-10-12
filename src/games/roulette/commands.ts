@@ -15,7 +15,8 @@ import { safeDefer, safeEdit, replyError, uiExactMode, uiSigFigs } from '../../g
 import { renderAmountInline } from '../../util/amountRender.js';
 import { ensureGuildInteraction } from '../../interactions/guards.js';
 import { withUserLuck } from '../../rng/luck.js';
-import { onGambleXP } from '../../rank/xpEngine.js';
+import { awardGameXp } from '../../rank/xp.js';
+import { formatXpLine } from '../../ui/xpLine.js';
 import { rememberUserChannel } from '../../rank/announce.js';
 import { getSetting } from '../../db/kv.js';
 import { assertWithinMaxBet } from '../../config/maxBet.js';
@@ -127,9 +128,24 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const mode = uiExactMode(db, "guild");
     const sig = uiSigFigs(db);
     const balText = mode === "inline" ? renderAmountInline(newBal, sig) : formatBolt(newBal);
+
+    // Award XP for completed round
+    let xpLine = '';
+    try {
+      const grant = await awardGameXp(interaction.guildId!, userId, {
+        wager: BigInt(betAmount),
+        game: 'roulette',
+        rounds: 1
+      });
+      const xpText = formatXpLine(grant);
+      if (xpText) {
+        xpLine = `\n${xpText}`;
+      }
+    } catch { }
+
     const embed = themedEmbed(theme, '🎡 Roulette', `${summary.number} (${summary.color})
 ${headline}
-New balance: ${balText}`).setImage(`attachment://${card.filename}`);
+New balance: ${balText}${xpLine}`).setImage(`attachment://${card.filename}`);
 
     const primary = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId(`roulette:repeat:${userId}`).setStyle(ButtonStyle.Primary).setLabel('Repeat Bet'),
@@ -147,8 +163,6 @@ New balance: ${balText}`).setImage(`attachment://${card.filename}`);
         new StringSelectMenuOptionBuilder().setLabel('2nd 12').setValue('dozen:2'),
         new StringSelectMenuOptionBuilder().setLabel('3rd 12').setValue('dozen:3'),
       );
-    // XP grant once per completed round
-    try { if (ranksEnabled) onGambleXP(interaction.guildId!, userId, betAmount, Number(newBal)); } catch { }
     await safeEdit(interaction, { embeds: [embed], files: [file], components: [primary, new ActionRowBuilder<any>().addComponents(selects as any)] });
   } catch (e: any) {
     await replyError(interaction, "ERR-ROULETTE", console, { err: String(e) });

@@ -5,6 +5,7 @@ import { registerAllCommands } from './register.js';
 import { ensureSchema } from './db/ensure.js';
 import { ui } from './cli/ui.js';
 import { createLogger } from "./log.js";
+import chalk from 'chalk';
 const log = createLogger();
 import boxen from 'boxen';
 import { VERBOSE, vlog } from './util/verbose.js';
@@ -43,7 +44,13 @@ async function main() {
     } catch { }
   }
   process.on('uncaughtException', (e: any) => vlog({ msg: 'uncaughtException', name: e?.name, message: e?.message, stack: (e?.stack || '').split('\n').slice(0, 10) }));
-  process.on('unhandledRejection', (reason: any) => { log.error({ msg: "unhandledRejection", reason: String(reason) }); });
+  process.on('unhandledRejection', (reason: any) => {
+    const msg = (reason && (reason as any).stack) || String(reason);
+    try { console.error(chalk.red(`[${new Date().toISOString()}] ERROR: unhandledRejection`)); } catch {}
+    try { console.error(chalk.red(`    reason: ${JSON.stringify((reason as any)?.message ?? reason)}`)); } catch {}
+    try { console.error(chalk.red(msg)); } catch {}
+    try { log.error({ msg: "unhandledRejection", reason: String((reason as any)?.message ?? reason) }); } catch {}
+  });
   // Boot summary (only in verbose mode)
   if (VERBOSE) {
     try {

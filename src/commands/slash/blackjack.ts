@@ -31,6 +31,7 @@ import { rememberUserChannel } from '../../rank/announce.js';
 import { getSetting } from '../../db/kv.js';
 import { dbToBigint, bigintToDb, toBigInt } from '../../utils/bigint.js';
 import type { RNG } from '../../util/rng.js';
+import { logInfo, logError } from '../../utils/logger.js';
 
 type SessionRow = {
   id: number;
@@ -242,6 +243,13 @@ export async function execute(i: ChatInputCommandInteraction) {
     const state = dealInitial(bet, rng);
     (state as any).channelId = channelId;
     saveSession(guildId, userId, state);
+    logInfo('dealt cards', {
+      guild: { id: guildId, name: i.guild?.name },
+      channel: { id: channelId },
+      user: { id: userId, tag: i.user.tag },
+      command: 'blackjack',
+      sub: 'start'
+    }, { bet });
     const m = await renderAndReply(i, state, { revealDealer: false, disableDouble: false, finished: state.finished });
     try { const msg = await (m as any); const mid = (msg?.id || (await i.fetchReply())?.id) as string; if (mid) { (state as any).messageId = mid; saveSession(guildId, userId, state); } } catch { }
     ensureTimeout(guildId, channelId, userId, i.client);
@@ -453,6 +461,13 @@ export async function execute(i: ChatInputCommandInteraction) {
       const errMsg = `${e?.name || 'Error'}: ${e?.message || String(e)}`;
       const stack = (e?.stack || '').split('\n')[0] || '';
       console.error(JSON.stringify({ msg: 'handler_error', name: 'blackjack', sub: 'cancel', guildId, userId, error: errMsg, stack }));
+      logError('blackjack cancel failed', {
+        guild: { id: guildId, name: i.guild?.name },
+        channel: { id: channelId },
+        user: { id: userId, tag: i.user.tag },
+        command: 'blackjack',
+        sub: 'cancel'
+      }, e);
       const isSchema = /no such column|no such table/i.test(String(e?.message || ''));
       if (isSchema) {
         try {

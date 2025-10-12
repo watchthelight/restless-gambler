@@ -26,7 +26,7 @@
     "purge:guild": "tsx src/tools/purge.ts --target guild --guild %DEV_GUILD_ID%",
     "purge:all": "tsx src/tools/purge.ts --target global && tsx src/tools/purge.ts --target guild --guild %DEV_GUILD_ID%",
     "list:commands": "node dist/scripts/list-commands.js || tsx scripts/list-commands.ts",
-    "env:check": "node -e \"const m=+process.versions.node.split('.')[0]; if(m>=21||m<20){console.error('\u274C This project requires Node 20.x LTS. On Windows, install nvm-windows and run: nvm install 20.18.1 && nvm use 20.18.1'); process.exit(1)}\"",
+    "env:check": "node -e \"const m=+process.versions.node.split('.')[0]; if(m>=21||m<20){console.error('❌ This project requires Node 20.x LTS. On Windows, install nvm-windows and run: nvm install 20.18.1 && nvm use 20.18.1'); process.exit(1)}\"",
     "preinstall": "npm run env:check",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write .",
@@ -37,11 +37,12 @@
     "launch": "npm run build && npm test && npm run start:pretty"
   },
   "dependencies": {
-    "chokidar": "^3.6.0",
     "better-sqlite3": "^9.4.0",
     "boxen": "^7.1.1",
-    "chalk": "^5.3.0",
+    "chalk": "^5.6.2",
+    "chokidar": "^3.6.0",
     "cli-progress": "^3.12.0",
+    "dayjs": "^1.11.18",
     "discord.js": "^14.15.3",
     "figlet": "^1.9.3",
     "gradient-string": "^2.0.2",

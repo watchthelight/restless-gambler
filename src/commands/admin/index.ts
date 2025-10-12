@@ -28,6 +28,7 @@ import { isRateLimited, getRateLimitReset } from '../../util/ratelimit.js';
 import { auditLog, type AdminAuditEvent } from '../../util/audit.js';
 import { setWhitelistMode, releaseWhitelist } from '../../db/commandControl.js';
 import { jsonStringifySafeBigint } from '../../utils/json.js';
+import { logInfo, logError } from '../../utils/logger.js';
 
 export async function performReboot(): Promise<void> {
   // In tests, DO NOT schedule timers or exit the process.
@@ -239,6 +240,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const exact = formatExact(newBal);
     const embed = walletEmbed({ title: 'Funds Added', headline: `${user.tag} +${formatBolts(amount)}. New balance:`, pretty, exact });
     console.log(JSON.stringify({ msg: 'admin_action', action: 'give', target: user.id, amount: amount, admin: interaction.user.id, guildId: interaction.guildId }));
+    logInfo('granted currency', {
+      guild: { id: interaction.guildId!, name: interaction.guild?.name },
+      channel: { id: interaction.channelId },
+      user: { id: interaction.user.id, tag: interaction.user.tag },
+      command: 'admin',
+      sub: 'give'
+    }, { targetUser: user.id, amount, newBalance: String(newBal) });
     await interaction.editReply({ embeds: [embed], components: [] });
   }
   else if (sub === 'whitelist') {

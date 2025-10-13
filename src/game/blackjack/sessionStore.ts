@@ -23,7 +23,6 @@ export function ensureBlackjackSessionsSchema(db: Database.Database, log = conso
       CREATE INDEX IF NOT EXISTS idx_bj_sessions_guild_user ON blackjack_sessions(guild_id, user_id);
       CREATE INDEX IF NOT EXISTS idx_bj_sessions_status ON blackjack_sessions(status);
     `);
-        log.info?.({ msg: "bj_schema_created" });
         return;
     }
     const names = cols(db, "blackjack_sessions");
@@ -34,7 +33,7 @@ export function ensureBlackjackSessionsSchema(db: Database.Database, log = conso
         db.exec(`UPDATE blackjack_sessions SET status = CASE active WHEN 1 THEN 'active' ELSE 'settled' END WHERE status IS NULL`);
         db.exec(`UPDATE blackjack_sessions SET status = 'settled' WHERE status IS NULL`);
         db.exec(`CREATE INDEX IF NOT EXISTS idx_bj_sessions_status ON blackjack_sessions(status)`);
-        log.info?.({ msg: "bj_schema_upgraded_active_to_status" });
+        // log.info?.({ msg: "bj_schema_upgraded_active_to_status" });
     }
     // If neither exists, add status.
     if (!names.has("status")) {
@@ -45,7 +44,7 @@ export function ensureBlackjackSessionsSchema(db: Database.Database, log = conso
     if (!names.has("guild_id")) {
         db.exec(`ALTER TABLE blackjack_sessions ADD COLUMN guild_id TEXT`);
         db.exec(`CREATE INDEX IF NOT EXISTS idx_bj_sessions_guild_user ON blackjack_sessions(guild_id, user_id)`);
-        log.info?.({ msg: "bj_schema_added_guild_id" });
+        // log.info?.({ msg: "bj_schema_added_guild_id" });
     }
     // Add started_at if missing
     if (!names.has("started_at")) {
@@ -56,7 +55,7 @@ export function ensureBlackjackSessionsSchema(db: Database.Database, log = conso
         } else if (names.has("createdAt")) {
             db.exec(`UPDATE blackjack_sessions SET started_at = createdAt WHERE started_at = 0`);
         }
-        log.info?.({ msg: "bj_schema_added_started_at" });
+        // log.info?.({ msg: "bj_schema_added_started_at" });
     }
     // Add updated_at if missing
     if (!names.has("updated_at")) {
@@ -67,14 +66,14 @@ export function ensureBlackjackSessionsSchema(db: Database.Database, log = conso
         } else if (names.has("started_at")) {
             db.exec(`UPDATE blackjack_sessions SET updated_at = started_at WHERE updated_at = 0`);
         }
-        log.info?.({ msg: "bj_schema_added_updated_at" });
+        // log.info?.({ msg: "bj_schema_added_updated_at" });
     }
 
     // Fix ID column type mismatch (legacy tables have INTEGER, new tables have TEXT)
     const idCol = db.prepare(`PRAGMA table_info(blackjack_sessions)`).all() as any[];
     const idInfo = idCol.find((c: any) => c.name === 'id');
     if (idInfo && idInfo.type === 'INTEGER') {
-        log.info?.({ msg: "bj_schema_migrating_id_column", note: "Converting INTEGER id to TEXT UUID" });
+        // log.info?.({ msg: "bj_schema_migrating_id_column", note: "Converting INTEGER id to TEXT UUID" });
         try {
             // Delete all old sessions (safer than trying to migrate with UUID generation)
             // Old sessions are likely stale anyway
@@ -95,7 +94,7 @@ export function ensureBlackjackSessionsSchema(db: Database.Database, log = conso
                 CREATE INDEX IF NOT EXISTS idx_bj_sessions_guild_user ON blackjack_sessions(guild_id, user_id);
                 CREATE INDEX IF NOT EXISTS idx_bj_sessions_status ON blackjack_sessions(status);
             `);
-            log.info?.({ msg: "bj_schema_id_migration_complete", note: "Old sessions cleared" });
+            // log.info?.({ msg: "bj_schema_id_migration_complete", note: "Old sessions cleared" });
         } catch (e: any) {
             log.error?.({ msg: "bj_schema_id_migration_failed", error: String(e) });
         }
@@ -151,5 +150,5 @@ export function endSession(guildId: string, userId: string) {
     const db = getGuildDb(guildId);
     try {
         db.prepare(`DELETE FROM blackjack_sessions WHERE guild_id = ? AND user_id = ?`).run(guildId, userId);
-    } catch {}
+    } catch { }
 }

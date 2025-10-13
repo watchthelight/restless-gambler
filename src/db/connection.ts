@@ -5,6 +5,7 @@ import { VERBOSE, vlog } from "../util/verbose.js";
 import { migrateGuildDb } from "./migrateGuild.js";
 import { ensureSuperAdminsSchema, superAdminInsertSQL, ensureAdminSchema } from "./adminSchema.js";
 import { ensureBlackjackSessionsSchema } from "../game/blackjack/sessionStore.js";
+import { getConcurrency } from "../config/index.js";
 
 // New per-guild DB manager. Keeps backward exports minimally for legacy callers.
 
@@ -29,8 +30,17 @@ function ensureDirExists(dirPath: string) {
 function openDb(filePath: string): Database.Database {
   ensureDirExists(path.dirname(filePath));
   const db = new Database(filePath, { fileMustExist: false });
-  db.pragma("journal_mode = WAL");
-  db.pragma("busy_timeout = 5000"); // Wait up to 5 seconds if database is locked
+
+  // Apply SQLite tuning from config
+  const config = getConcurrency();
+
+  if (config.sqlite.wal) {
+    db.pragma("journal_mode = WAL");
+  }
+  db.pragma(`busy_timeout = ${config.sqlite.busyTimeoutMs}`);
+  db.pragma(`cache_size = -${config.sqlite.cacheMB * 1024}`); // Negative for KB
+  db.pragma(`mmap_size = ${config.sqlite.mmapMB * 1024 * 1024}`); // Bytes
+
   db.defaultSafeIntegers(true); // Enable BigInt for INTEGER columns
   // Lightweight SQL tracing
   if (VERBOSE && (Database as any)?.prototype?.prepare && !(db as any).__tracePatched) {

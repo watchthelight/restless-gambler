@@ -92,5 +92,21 @@
     "public_results": true,
     "give_percent_max": 50,
     "admin_give_cap": "1000000000000000"
+  },
+  "concurrency": {
+    "targetCpuThreads": 12,
+    "clusterWorkers": 4,
+    "workerPoolSize": 8,
+    "shards": "auto",
+    "sqlite": {
+      "wal": true,
+      "busyTimeoutMs": 5000,
+      "cacheMB": 512,
+      "mmapMB": 512
+    },
+    "ramdisk": {
+      "enabled": false,
+      "path": ""
+    }
   }
 }

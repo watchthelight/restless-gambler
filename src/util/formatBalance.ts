@@ -3,7 +3,7 @@
  * Provides backward-compatible interface
  */
 
-import { HugeDecimal, formatShort, formatExact as formatExactNew } from '../lib/num/index.js';
+import { HugeDecimal, formatShort, formatExact as formatExactNew, parseAmount } from '../lib/num/index.js';
 
 /**
  * Format balance with suffix notation (1.5k, 2.75m, etc.)
@@ -48,8 +48,7 @@ export function formatExact(value: bigint | number | HugeDecimal): string {
  * Parse balance string back to bigint (legacy compatibility)
  */
 export function parseBalance(input: string): bigint {
-  const { parseAmount } = require('../lib/num/index.js');
-  return parseAmount(input).toBigInt();
+  return parseAmount(input, { allowNegative: true }).toBigInt();
 }
 
 /**

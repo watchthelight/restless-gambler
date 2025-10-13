@@ -210,13 +210,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const exact = formatExact(newBal);
     const embed = walletEmbed({ title: 'Funds Added', headline: `${user.tag} +${formatBolts(requested)}. New balance:`, pretty, exact });
     console.log(JSON.stringify({ msg: 'admin_action', action: 'give', target: user.id, amount: String(requested), admin: interaction.user.id, guildId: interaction.guildId }));
+    const printable = newBal.toStringExact();
     logInfo('granted currency', {
       guild: { id: interaction.guildId!, name: interaction.guild?.name },
       channel: { id: interaction.channelId },
       user: { id: interaction.user.id, tag: interaction.user.tag },
       command: 'admin',
       sub: 'give'
-    }, { targetUser: user.id, amount: String(requested), newBalance: String(newBal), clamped, cap: String(cap) });
+    }, { targetUser: user.id, amount: String(requested), newBalance: printable, clamped, cap: String(cap) });
     // Acknowledge + respond safely regardless of prior defer/reply state
     const embeds = [embed] as any[];
     if (clamped) {

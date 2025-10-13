@@ -178,7 +178,7 @@ describe('formatShort', () => {
   test('thousands', () => {
     const hd = HugeDecimal.fromBigInt(1500n);
     const formatted = formatShort(hd);
-    expect(formatted).toMatch(/1\.5+k/);
+    expect(formatted).toMatch(/1\.5[0]*k/);
   });
 
   test('millions', () => {

@@ -239,24 +239,24 @@ export class HugeDecimal {
     if (this.isZero()) return other;
     if (other.isZero()) return this;
 
-    // Align to same effective exponent
+    // We need to add: (this.mantissa / 10^this.scale) * 10^this.exp10 + (other.mantissa / 10^other.scale) * 10^other.exp10
+    // Strategy: convert both to the same scale and exp10, then add mantissas
+
+    // Find minimum effective exponent to avoid losing precision
     const thisEffExp = this.exp10 - this.scale;
     const otherEffExp = other.exp10 - other.scale;
+    const minEffExp = thisEffExp < otherEffExp ? thisEffExp : otherEffExp;
 
-    let m1 = this.mantissa;
-    let m2 = other.mantissa;
-    let targetEffExp = thisEffExp;
+    // Expand mantissas to align with minEffExp
+    // For this: mantissa * 10^(this.exp10 - this.scale - minEffExp) at scale this.scale
+    // Simplify: mantissa * 10^(thisEffExp - minEffExp)
+    const thisShift = thisEffExp - minEffExp;
+    const otherShift = otherEffExp - minEffExp;
 
-    if (thisEffExp < otherEffExp) {
-      // Scale this up
-      m1 = m1 * (10n ** (otherEffExp - thisEffExp));
-      targetEffExp = otherEffExp;
-    } else if (otherEffExp < thisEffExp) {
-      // Scale other up
-      m2 = m2 * (10n ** (thisEffExp - otherEffExp));
-    }
+    const m1 = this.mantissa * (10n ** thisShift);
+    const m2 = other.mantissa * (10n ** otherShift);
 
-    // Now both are at targetEffExp, perform signed addition
+    // Perform signed addition
     const v1 = m1 * BigInt(this.sign);
     const v2 = m2 * BigInt(other.sign);
     const sum = v1 + v2;
@@ -266,7 +266,7 @@ export class HugeDecimal {
     const newSign: 1 | -1 = sum > 0n ? 1 : -1;
     const newMantissa = sum > 0n ? sum : -sum;
 
-    return HugeDecimal.fromComponents(newSign, newMantissa, 0n, targetEffExp);
+    return HugeDecimal.fromComponents(newSign, newMantissa, 0n, minEffExp);
   }
 
   /**

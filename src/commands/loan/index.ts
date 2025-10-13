@@ -276,7 +276,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       const n = forgiveAll(guildId, target.id);
       // Reset positive balances to 0
       const bal = getBalance(guildId, target.id);
-      if (bal > 0n) await adjustBalance(guildId, target.id, -bal, 'loan:forgive:reset');
+      const { HugeDecimal } = await import('../../lib/num/index.js');
+      if (bal.gt(HugeDecimal.ZERO)) await adjustBalance(guildId, target.id, bal.negate(), 'loan:forgive:reset');
       resetScore(guildId, target.id);
       await interaction.reply({ content: `Forgave ${n} loans; <@${target.id}>'s balance reset to 0 and credit score reset.`, flags: MessageFlags.Ephemeral }).catch(() => { });
       return;
@@ -438,7 +439,8 @@ export async function handleButton(interaction: ButtonInteraction) {
   else if (size === 'half') payAmt = Math.max(1, Math.floor(Number(owedInterest + owedPrincipal) / 2));
   else payAmt = Math.max(1, Number(owedInterest + owedPrincipal));
   const bal = getBalance(interaction.guildId, interaction.user.id);
-  if (bal < BigInt(payAmt)) {
+  const { HugeDecimal } = await import('../../lib/num/index.js');
+  if (bal.lt(HugeDecimal.fromBigInt(BigInt(payAmt)))) {
     await interaction.followUp({ content: `Insufficient balance to pay ${formatBolts(payAmt)}.`, flags: MessageFlags.Ephemeral }).catch(() => { });
     return;
   }

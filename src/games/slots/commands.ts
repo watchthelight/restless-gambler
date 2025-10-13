@@ -58,7 +58,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (bet < minBet) {
       return safeEdit(interaction, { flags: MessageFlags.Ephemeral, content: `Minimum bet is ${formatBolts(minBet)}.` });
     }
-    if (current < BigInt(bet)) {
+    const { HugeDecimal } = await import('../../lib/num/index.js');
+    if (current.lt(HugeDecimal.fromBigInt(BigInt(bet)))) {
       const mode = uiExactMode(db, "guild");
       const sig = uiSigFigs(db);
       const balText = mode === "inline" ? renderAmountInline(current, sig) : formatBolts(current);

@@ -228,17 +228,18 @@ export async function execute(i: ChatInputCommandInteraction) {
     if (bet < limits.minBet) { await safeEdit(i, { content: `Minimum bet is ${formatBolts(limits.minBet)}.` }); return; }
     try { assertWithinMaxBet(db, toBigInt(bet)); } catch (e: any) { if (e?.code === 'ERR_MAX_BET') { try { console.debug({ msg: 'bet_blocked', code: 'ERR_MAX_BET', guildId, userId, bet: String(bet) }); } catch {} await safeEdit(i, { content: e.message }); return; } throw e; }
     const bal = getBalance(guildId, userId);
-    if (bal < BigInt(bet)) {
+    const { HugeDecimal } = await import('../../lib/num/index.js');
+    if (bal.lt(HugeDecimal.fromBigInt(BigInt(bet)))) {
       const db = getGuildDb(guildId);
       const mode = uiExactMode(db, "guild");
       const sig = uiSigFigs(db);
       const fmt = (v: number | bigint) => mode === "inline" ? renderAmountInline(v as any, sig) : formatBolts(v);
       const required = bet;
-      const shortfall = (BigInt(required) - bal);
+      const shortfall = HugeDecimal.fromBigInt(BigInt(required)).sub(bal);
       const fields = [
-        { name: 'Current balance', value: fmt(bal), inline: true },
+        { name: 'Current balance', value: fmt(Number(bal.toBigInt())), inline: true },
         { name: 'Required bet', value: fmt(required), inline: true },
-        { name: 'Shortfall', value: fmt(shortfall), inline: true },
+        { name: 'Shortfall', value: fmt(Number(shortfall.toBigInt())), inline: true },
       ];
       await ensurePublicDefer(i as any);
       const card = errorCard({
@@ -404,7 +405,8 @@ export async function execute(i: ChatInputCommandInteraction) {
     } else if (sub === 'double') {
       // Must have funds to double
       const bal = getBalance(guildId, userId);
-      if (bal < state.bet) {
+      const { HugeDecimal } = await import('../../lib/num/index.js');
+      if (bal.lt(HugeDecimal.fromNumber(state.bet))) {
         const mode = uiExactMode(db, "guild");
         const sig = uiSigFigs(db);
         const balText = mode === "inline" ? renderAmountInline(bal, sig) : formatBolts(bal);

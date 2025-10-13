@@ -25,7 +25,8 @@ export async function handleSlotsSelect(interaction: StringSelectMenuInteraction
   if (!interaction.guildId) { await safeReply(interaction, { content: 'This bot only works in servers.', flags: MessageFlags.Ephemeral }); return; }
   rememberUserChannel(interaction.guildId, interaction.user.id, interaction.channelId);
   const current = getBalance(interaction.guildId, userId);
-  if (current < BigInt(bet)) {
+  const { HugeDecimal } = await import('../../lib/num/index.js');
+  if (current.lt(HugeDecimal.fromBigInt(BigInt(bet)))) {
     await safeReply(interaction, { content: `Insufficient balance for ${bet}.`, flags: MessageFlags.Ephemeral });
     return;
   }

@@ -410,7 +410,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const { getBalance, adjustBalance } = await import('../../economy/wallet.js');
     const current = getBalance(interaction.guildId!, user.id);
     const want = amount;
-    const take = current < want ? current : want;
+    const { HugeDecimal } = await import('../../lib/num/index.js');
+    const take = current.lt(HugeDecimal.fromBigInt(want)) ? current : HugeDecimal.fromBigInt(want);
     const delta = -Number(take);
     const actualTaken = Number(take);
 

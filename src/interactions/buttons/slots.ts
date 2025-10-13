@@ -37,7 +37,8 @@ export async function handleSlotsButton(interaction: ButtonInteraction) {
   try { assertWithinMaxBet(getGuildDb(interaction.guildId), toBigInt(bet)); } catch (e: any) {
     if (e?.code === 'ERR_MAX_BET') { try { console.debug({ msg: 'bet_blocked', code: 'ERR_MAX_BET', guildId: interaction.guildId, userId, bet: String(bet) }); } catch {} await safeReply(interaction, { content: e.message, flags: MessageFlags.Ephemeral }); return; }
   }
-  if (current < BigInt(bet)) {
+  const { HugeDecimal } = await import('../../lib/num/index.js');
+  if (current.lt(HugeDecimal.fromBigInt(BigInt(bet)))) {
     const db = getGuildDb(interaction.guildId);
     const mode = uiExactMode(db, "guild");
     const sig = uiSigFigs(db);

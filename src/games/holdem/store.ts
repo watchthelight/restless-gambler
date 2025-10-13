@@ -85,7 +85,8 @@ export async function joinTable(guildId: string, tableId: number, userId: string
   if (buyin < minBuyin || buyin > maxBuyin) throw new Error("buyin_out_of_range");
 
   const bal = getBalance(guildId, userId);
-  if (bal < BigInt(buyin)) throw new Error("insufficient_funds");
+  const { HugeDecimal } = await import('../../lib/num/index.js');
+  if (bal.lt(HugeDecimal.fromBigInt(BigInt(buyin)))) throw new Error("insufficient_funds");
 
   const taken = getSeatMap(guildId, tableId);
   const seat = firstFreeSeat(table.seats, taken);

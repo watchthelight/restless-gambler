@@ -1,8 +1,9 @@
 import { formatBalance } from "../util/formatBalance.js";
+import type { HugeDecimal } from '../lib/num/index.js';
 
 export const BOLT = "🔩";
 
-export function formatBolt(n: number | bigint): string {
+export function formatBolt(n: number | bigint | HugeDecimal): string {
   return `${formatBalance(n)} ${BOLT}`;
 }
 

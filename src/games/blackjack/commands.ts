@@ -41,7 +41,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     if (e?.code === 'ERR_MAX_BET') { await interaction.reply({ content: e.message, flags: MessageFlags.Ephemeral }); return; }
     throw e;
   }
-  if (bal < BigInt(bet)) {
+  const { HugeDecimal } = await import('../../lib/num/index.js');
+  if (bal.lt(HugeDecimal.fromBigInt(BigInt(bet)))) {
     const db = getGuildDb(interaction.guildId);
     const mode = uiExactMode(db, "guild");
     const sig = uiSigFigs(db);

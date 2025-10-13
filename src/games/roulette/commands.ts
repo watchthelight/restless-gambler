@@ -101,7 +101,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return;
   }
   const bal = getBalance(interaction.guildId!, userId);
-  if (bal < betAmount) {
+  const { HugeDecimal } = await import('../../lib/num/index.js');
+  if (bal.lt(HugeDecimal.fromNumber(betAmount))) {
     const mode = uiExactMode(db, "guild");
     const sig = uiSigFigs(db);
     const balText = mode === "inline" ? renderAmountInline(bal, sig) : formatBolts(bal);

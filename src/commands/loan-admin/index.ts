@@ -84,8 +84,9 @@ export async function execute(
     const n = forgiveAll(guildId, target.id);
     // Reset balance to 0
     const bal = getBalance(guildId, target.id);
-    if (bal > 0n)
-      await adjustBalance(guildId, target.id, -bal, 'loan:forgive:reset');
+    const { HugeDecimal } = await import('../../lib/num/index.js');
+    if (bal.gt(HugeDecimal.ZERO))
+      await adjustBalance(guildId, target.id, bal.negate(), 'loan:forgive:reset');
     resetScore(guildId, target.id);
     const theme = getGuildTheme(guildId);
     const embed = themedEmbed(

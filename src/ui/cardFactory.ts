@@ -221,7 +221,7 @@ function renderGameResult(ctx: any, opts: Extract<CardOpts, { layout: 'GameResul
 
   // Right rail numbers
   const rightX = 700;
-  const baseY = pad * 2 + 80;
+  const baseY = pad * 2 + 120; // Moved down from 80 to 120 (40px lower)
   ctx.fillStyle = theme.textSecondary;
   ctx.font = '500 13px "Inter", system-ui';
   ctx.fillText('Bet', rightX, baseY);
@@ -241,9 +241,18 @@ function renderGameResult(ctx: any, opts: Extract<CardOpts, { layout: 'GameResul
 
   // Main panel visualization
   if (payload.kind === 'slots') {
-    drawSlotsGrid(ctx, payload.grid, theme, 48, pad * 2 + 60, 580, 360);
+    // Center slots grid in the left area (accounting for right rail at 700)
+    const slotsW = 520;
+    const slotsH = 340;
+    const slotsX = (rightX - slotsW) / 2; // Center in left area
+    const slotsY = pad * 2 + 90;
+    drawSlotsGrid(ctx, payload.grid, theme, slotsX, slotsY, slotsW, slotsH);
   } else if (payload.kind === 'roulette') {
-    drawWheel(ctx, payload.number, payload.color, theme, 260, pad * 2 + 160, 180);
+    // Visually center wheel in the left area (accounting for right rail and visual balance)
+    const wheelCX = 280; // Move left for visual centering
+    const wheelCY = pad * 2 + 195; // Move down for better vertical balance
+    const wheelRadius = 120;
+    drawWheel(ctx, payload.number, payload.color, theme, wheelCX, wheelCY, wheelRadius);
   } else if (payload.kind === 'blackjack') {
     drawBJ(ctx, payload.dealer, payload.player, theme, 60, pad * 2 + 90);
   } else if (payload.kind === 'holdem') {
@@ -423,39 +432,210 @@ function getGameVals(payload: GameResultPayload) {
 }
 
 function drawSlotsGrid(ctx: any, grid: string[][], theme: Theme, x: number, y: number, w: number, h: number) {
+  // Slot machine frame background
+  const frameX = x - 10;
+  const frameY = y - 10;
+  const frameW = w + 20;
+  const frameH = h + 20;
+
+  // Machine outer frame with gradient
+  const frameGrad = ctx.createLinearGradient(frameX, frameY, frameX, frameY + frameH);
+  frameGrad.addColorStop(0, '#1a1a1a');
+  frameGrad.addColorStop(1, '#0a0a0a');
+  drawRoundedRect(ctx, frameX, frameY, frameW, frameH, 16, frameGrad);
+
+  // Inner display area
+  drawRoundedRect(ctx, x, y, w, h, 12, '#000000');
+
   const cellW = Math.floor(w / 3);
   const cellH = Math.floor(h / 3);
+
   for (let r = 0; r < 3; r++) {
     for (let c = 0; c < 3; c++) {
       const cx = x + c * cellW;
       const cy = y + r * cellH;
-      drawRoundedRect(ctx, cx + 6, cy + 6, cellW - 12, cellH - 12, 12, '#00000010');
-      ctx.fillStyle = theme.textPrimary;
-      ctx.font = '700 40px "Segoe UI Symbol", "Noto Emoji"';
-      const s = symbolEmoji(grid[r][c]);
-      ctx.fillText(s, cx + cellW / 2 - 12, cy + cellH / 2 + 14);
+
+      // Reel cell background
+      const cellBg = ctx.createLinearGradient(cx, cy, cx, cy + cellH);
+      cellBg.addColorStop(0, '#1a1a1a');
+      cellBg.addColorStop(0.5, '#0f0f0f');
+      cellBg.addColorStop(1, '#1a1a1a');
+      drawRoundedRect(ctx, cx + 4, cy + 4, cellW - 8, cellH - 8, 8, cellBg);
+
+      // Symbol rendering with enhanced visuals
+      const symbol = grid[r][c];
+      const emoji = symbolEmoji(symbol);
+
+      // Glow effect for winning symbols (center row)
+      if (r === 1) {
+        ctx.shadowColor = theme.accent ? `#${theme.accent.toString(16).padStart(6, '0')}` : '#5865f2';
+        ctx.shadowBlur = 20;
+      }
+
+      ctx.fillStyle = getSymbolColor(symbol, theme);
+      ctx.font = '700 60px "Segoe UI Symbol", "Noto Emoji", "Apple Color Emoji"';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(emoji, cx + cellW / 2, cy + cellH / 2);
+
+      ctx.shadowBlur = 0;
     }
   }
+
+  // Center payline indicator
+  const paylineY = y + cellH + cellH / 2;
+  ctx.strokeStyle = theme.accent ? `#${theme.accent.toString(16).padStart(6, '0')}80` : '#5865f280';
+  ctx.lineWidth = 3;
+  ctx.setLineDash([10, 5]);
+  ctx.beginPath();
+  ctx.moveTo(x - 5, paylineY);
+  ctx.lineTo(x + w + 5, paylineY);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
 }
 
 function drawWheel(ctx: any, number: number, color: string, theme: Theme, cx: number, cy: number, radius: number) {
+  // American roulette wheel layout (0-36)
+  const wheelNumbers = [
+    0, 28, 9, 26, 30, 11, 7, 20, 32, 17, 5, 22, 34, 15, 3, 24, 36, 13, 1,
+    27, 6, 25, 33, 16, 8, 23, 10, 31, 19, 4, 21, 2, 14, 35, 12, 18, 29
+  ];
+
+  const REDS = new Set([1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36]);
+
+  // Outer rim
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+  ctx.shadowBlur = 20;
   ctx.beginPath();
   ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-  ctx.fillStyle = '#222';
+  const rimGrad = ctx.createRadialGradient(cx, cy, radius - 15, cx, cy, radius);
+  rimGrad.addColorStop(0, '#8B7355');
+  rimGrad.addColorStop(0.5, '#D4AF37');
+  rimGrad.addColorStop(1, '#8B7355');
+  ctx.fillStyle = rimGrad;
   ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Inner wheel background
   ctx.beginPath();
-  ctx.arc(cx, cy, radius - 20, 0, Math.PI * 2);
-  ctx.fillStyle = '#ddd';
+  ctx.arc(cx, cy, radius - 12, 0, Math.PI * 2);
+  ctx.fillStyle = '#0a0a0a';
   ctx.fill();
-  ctx.fillStyle = color === 'green' ? '#2ecc71' : color === 'red' ? '#e63946' : '#1f2937';
+
+  // Draw wheel segments
+  const segmentAngle = (Math.PI * 2) / wheelNumbers.length;
+  const currentIndex = wheelNumbers.indexOf(number);
+
+  for (let i = 0; i < wheelNumbers.length; i++) {
+    const num = wheelNumbers[i];
+    const angle = i * segmentAngle - Math.PI / 2;
+    const nextAngle = angle + segmentAngle;
+
+    // Determine color
+    let segmentColor: string;
+    if (num === 0) {
+      segmentColor = '#2ecc71';
+    } else if (REDS.has(num)) {
+      segmentColor = '#e63946';
+    } else {
+      segmentColor = '#1a1a1a';
+    }
+
+    // Draw segment
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, radius - 15, angle, nextAngle);
+    ctx.closePath();
+    ctx.fillStyle = segmentColor;
+    ctx.fill();
+
+    // Segment border
+    ctx.strokeStyle = '#D4AF37';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Draw number on segment (only for nearby numbers to avoid clutter)
+    if (Math.abs(i - currentIndex) <= 3 || Math.abs(i - currentIndex) >= wheelNumbers.length - 3) {
+      const textAngle = angle + segmentAngle / 2;
+      const textRadius = radius - 35;
+      const textX = cx + Math.cos(textAngle) * textRadius;
+      const textY = cy + Math.sin(textAngle) * textRadius;
+
+      ctx.save();
+      ctx.translate(textX, textY);
+      ctx.rotate(textAngle + Math.PI / 2);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '600 11px "Inter", Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(num), 0, 0);
+      ctx.restore();
+    }
+  }
+
+  // Center hub
   ctx.beginPath();
-  ctx.moveTo(cx, cy);
-  ctx.arc(cx, cy, radius - 20, 0, Math.PI / 6);
-  ctx.closePath();
+  ctx.arc(cx, cy, 20, 0, Math.PI * 2);
+  const hubGrad = ctx.createRadialGradient(cx, cy - 5, 0, cx, cy, 20);
+  hubGrad.addColorStop(0, '#D4AF37');
+  hubGrad.addColorStop(1, '#8B7355');
+  ctx.fillStyle = hubGrad;
   ctx.fill();
-  ctx.fillStyle = theme.textPrimary;
-  ctx.font = '700 28px "Cascadia Mono", monospace';
-  ctx.fillText(String(number), cx - 12, cy + radius + 36);
+
+  // Ball indicator pointing to winning number
+  const ballAngle = currentIndex * segmentAngle - Math.PI / 2 + segmentAngle / 2;
+  const ballX = cx + Math.cos(ballAngle) * (radius - 25);
+  const ballY = cy + Math.sin(ballAngle) * (radius - 25);
+
+  ctx.shadowColor = 'rgba(255, 255, 255, 0.8)';
+  ctx.shadowBlur = 15;
+  ctx.beginPath();
+  ctx.arc(ballX, ballY, 8, 0, Math.PI * 2);
+  const ballGrad = ctx.createRadialGradient(ballX - 2, ballY - 2, 0, ballX, ballY, 8);
+  ballGrad.addColorStop(0, '#ffffff');
+  ballGrad.addColorStop(1, '#cccccc');
+  ctx.fillStyle = ballGrad;
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Display winning number below wheel
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+
+  // Number background
+  const numBoxW = 80;
+  const numBoxH = 50;
+  const numBoxX = cx - numBoxW / 2;
+  const numBoxY = cy + radius + 20;
+
+  let numBgColor: string;
+  if (color === 'green') {
+    numBgColor = '#2ecc71';
+  } else if (color === 'red') {
+    numBgColor = '#e63946';
+  } else {
+    numBgColor = '#1a1a1a';
+  }
+
+  drawRoundedRect(ctx, numBoxX, numBoxY, numBoxW, numBoxH, 8, numBgColor);
+
+  // Number text - center it properly within the box
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '700 32px "Cascadia Mono", monospace';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(number), cx, numBoxY + numBoxH / 2);
+
+  // Color label
+  ctx.fillStyle = theme.textMuted;
+  ctx.font = '500 12px "Inter", Arial';
+  ctx.textBaseline = 'top';
+  ctx.fillText(color.toUpperCase(), cx, numBoxY + numBoxH + 10);
+
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
 }
 
 function drawBJ(ctx: any, dealer: string[], player: string[], theme: Theme, x: number, y: number) {
@@ -489,22 +669,43 @@ function drawHoldem(ctx: any, board: string[], hero: string[], theme: Theme, x: 
 function symbolEmoji(s: string): string {
   switch (s) {
     case '7':
-      return '7';
+      return '7️⃣';
     case 'BAR':
-      return 'B';
+      return '▬';
     case 'BELL':
       return '🔔';
     case 'CHERRY':
       return '🍒';
     case 'W':
-      return '*';
+      return '⭐';
     case 'A':
-      return 'A';
+      return '🅰️';
     case 'B':
-      return 'B';
+      return '🅱️';
     case 'C':
-      return 'C';
+      return '©️';
     default:
       return s;
+  }
+}
+
+function getSymbolColor(symbol: string, theme: Theme): string {
+  switch (symbol) {
+    case '7':
+      return '#FFD700'; // Gold
+    case 'BAR':
+      return '#FF6B6B'; // Red
+    case 'BELL':
+      return '#4ECDC4'; // Teal
+    case 'CHERRY':
+      return '#FF1744'; // Bright red
+    case 'W':
+      return '#FFC107'; // Amber (wild)
+    case 'A':
+    case 'B':
+    case 'C':
+      return theme.textPrimary;
+    default:
+      return theme.textPrimary;
   }
 }

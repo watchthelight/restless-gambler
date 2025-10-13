@@ -9,6 +9,8 @@ import { safeReply } from '../../interactions/reply.js';
 import { getGuildDb } from '../../db/connection.js';
 import { withUserLuck } from '../../rng/luck.js';
 import { onGambleXP } from '../../rank/xpEngine.js';
+import { awardGameXp } from '../../rank/xp.js';
+import { formatXpLine } from '../../ui/xpLine.js';
 import { getSetting } from '../../db/kv.js';
 import { rememberUserChannel } from '../../rank/announce.js';
 
@@ -38,7 +40,23 @@ export async function handleSlotsSelect(interaction: StringSelectMenuInteraction
   const theme = getGuildTheme(interaction.guildId);
   const card = await generateCard({ layout: 'GameResult', theme, payload: { kind: 'slots', grid: result.grid as any, bet, payout: result.payout, delta: net, balance: newBal } });
   const file = new AttachmentBuilder(card.buffer, { name: card.filename });
-  const embed = themedEmbed(theme, '🎰 Slots', net >= 0 ? `Win +${net}` : `Loss ${net}`).setImage(`attachment://${card.filename}`);
-  try { if (ranksEnabled) onGambleXP(interaction.guildId, userId, bet, Number(newBal)); } catch { }
+
+  // Award XP for completed round
+  let xpLine = '';
+  try {
+    if (ranksEnabled) {
+      const grant = await awardGameXp(interaction.guildId, userId, {
+        wager: BigInt(bet),
+        game: 'slots',
+        rounds: 1
+      });
+      const xpText = formatXpLine(grant);
+      if (xpText) {
+        xpLine = `\n${xpText}`;
+      }
+    }
+  } catch { }
+
+  const embed = themedEmbed(theme, '🎰 Slots', `${net >= 0 ? `Win +${net}` : `Loss ${net}`}${xpLine}`).setImage(`attachment://${card.filename}`);
   await interaction.editReply({ embeds: [embed], files: [file] });
 }

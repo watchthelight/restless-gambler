@@ -3,7 +3,8 @@ import { getGuildDb } from '../db/connection.js';
 
 const KEY = 'economy.max_admin_grant';
 const DEFAULT = 1_000_000_000n; // 1b
-const MAX = 10_000_000_000_000_000_000n; // 10 quintillion
+// 100 centillion (10^305): 1 followed by 305 zeros
+const MAX = 10n ** 305n;
 
 type CacheEntry = { value: bigint; expires: number };
 const cache = new Map<string, CacheEntry>();

@@ -33,4 +33,5 @@ export const errorCard = ({ command, type, message, errorId, details, titleOverr
       { name: 'Error ID', value: `\`${errorId}\``, inline: true },
       ...(details ? [{ name: 'Details', value: `\`\`\`\n${details.slice(0, 900)}\n\`\`\`` }] as Field[] : [])
     )
+    .setFooter({ text: '💡 Tip: Run /bugreport to report this issue to admins' })
     .setTimestamp();

@@ -21,6 +21,9 @@
     "blackjack": {
       "enabled": true
     },
+    "bugreport": {
+      "enabled": true
+    },
     "canary": {
       "enabled": true
     },

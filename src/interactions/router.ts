@@ -20,6 +20,32 @@ import * as RouletteCmd from '../games/roulette/commands.js';
 import * as AdminCmd from '../commands/admin/index.js';
 import * as LoanCmd from '../commands/loan/index.js';
 
+// Track last executed command per user (for bugreport autocomplete)
+const userLastCommand = new Map<string, string>();
+
+/**
+ * Record the last command path executed by a user.
+ */
+export function recordUserLastCommand(userId: string, path: string): void {
+  userLastCommand.set(userId, path);
+}
+
+/**
+ * Get the last command path executed by a user (for bugreport autocomplete).
+ */
+export function getUserLastCommand(userId: string): string | undefined {
+  return userLastCommand.get(userId);
+}
+
+/**
+ * Build command path from interaction (e.g., "blackjack start", "admin give").
+ */
+export function commandPath(i: ChatInputCommandInteraction): string {
+  const grp = i.options.getSubcommandGroup(false);
+  const sub = i.options.getSubcommand(false);
+  return [i.commandName, grp, sub].filter(Boolean).join(' ');
+}
+
 export function initInteractionRouter(client: Client) {
   client.on("interactionCreate", async (i: Interaction) => {
     const started = Date.now();
@@ -130,6 +156,12 @@ export function initInteractionRouter(client: Client) {
         try {
           await cmd.run(i as ChatInputCommandInteraction);
           if (ackTimer) clearTimeout(ackTimer);
+
+          // Record last command for bugreport autocomplete
+          try {
+            const path = commandPath(i as ChatInputCommandInteraction);
+            recordUserLastCommand((i as any).user.id, path);
+          } catch {}
         } catch (err: any) {
           if (ackTimer) clearTimeout(ackTimer);
           // Special-case amount parse errors: always show public red card with suggestions
@@ -149,7 +181,7 @@ export function initInteractionRouter(client: Client) {
           console.error(chalk.red((err && err.stack) || String(err)));
           await sendPublicError(i as any, {
             title: `${name} failed`,
-            message: err?.message ? `• Type: ${err.name || 'Error'}\n• Message: ${err.message}` : 'Something went wrong. Try again.',
+            message: err?.message ? `• Type: ${err.name || 'Error'}\n• Message: ${err.message}` : 'Something went wrong. Try again.\n\n💡 **Tip:** Run `/bugreport` to report this issue to admins.',
             errorId,
           });
           return;
@@ -191,7 +223,7 @@ export function initInteractionRouter(client: Client) {
           console.error(chalk.red((err && err.stack) || String(err)));
           await sendPublicError(i as any, {
             title: `interaction failed`,
-            message: err?.message ? `• Type: ${err.name || 'Error'}\n• Message: ${err.message}` : 'Something went wrong. Try again.',
+            message: err?.message ? `• Type: ${err.name || 'Error'}\n• Message: ${err.message}` : 'Something went wrong. Try again.\n\n💡 **Tip:** Run `/bugreport` to report this issue to admins.',
             errorId,
           });
           return;
@@ -219,7 +251,7 @@ export function initInteractionRouter(client: Client) {
           console.error(chalk.red((err && err.stack) || String(err)));
           await sendPublicError(i as any, {
             title: `interaction failed`,
-            message: err?.message ? `• Type: ${err.name || 'Error'}\n• Message: ${err.message}` : 'Something went wrong. Try again.',
+            message: err?.message ? `• Type: ${err.name || 'Error'}\n• Message: ${err.message}` : 'Something went wrong. Try again.\n\n💡 **Tip:** Run `/bugreport` to report this issue to admins.',
             errorId,
           });
           return;
@@ -232,7 +264,7 @@ export function initInteractionRouter(client: Client) {
       try {
         await sendPublicError(i as any, {
           title: `interaction failed`,
-          message: e?.message ? `• Type: ${e.name || 'Error'}\n• Message: ${e.message}` : 'Something went wrong. Try again.',
+          message: e?.message ? `• Type: ${e.name || 'Error'}\n• Message: ${e.message}` : 'Something went wrong. Try again.\n\n💡 **Tip:** Run `/bugreport` to report this issue to admins.',
           errorId,
         });
       } catch { /* ignore */ }

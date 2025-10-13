@@ -28,7 +28,9 @@ export function xpNeededFor(level: number, curve: Curve, maxLevel: number): numb
     case "exponential":
       // Exponential: careful growth with 18% increase per level
       // Formula: 75 × 1.18^L
-      return Math.floor(75 * Math.pow(1.18, L));
+      // Cap at Number.MAX_SAFE_INTEGER to prevent overflow
+      const rawXp = 75 * Math.pow(1.18, L);
+      return Math.floor(Math.min(rawXp, Number.MAX_SAFE_INTEGER));
   }
 }
 

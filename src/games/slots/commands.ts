@@ -34,9 +34,10 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
+  // Defer immediately to prevent interaction timeout
+  await safeDefer(interaction, false);
   if (!await ensureGuildInteraction(interaction)) return;
   rememberUserChannel(interaction.guildId!, interaction.user.id, interaction.channelId);
-  await safeDefer(interaction, false);
   try {
     const { getParsedAmount } = await import('../../interactions/options.js');
     const parsed = await getParsedAmount(interaction as any, 'bet');

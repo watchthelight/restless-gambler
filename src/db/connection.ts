@@ -30,6 +30,7 @@ function openDb(filePath: string): Database.Database {
   ensureDirExists(path.dirname(filePath));
   const db = new Database(filePath, { fileMustExist: false });
   db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 5000"); // Wait up to 5 seconds if database is locked
   db.defaultSafeIntegers(true); // Enable BigInt for INTEGER columns
   // Lightweight SQL tracing
   if (VERBOSE && (Database as any)?.prototype?.prepare && !(db as any).__tracePatched) {

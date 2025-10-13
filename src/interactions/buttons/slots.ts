@@ -15,6 +15,8 @@ import { safeReply } from '../../interactions/reply.js';
 import { withLock } from '../../util/locks.js';
 import { withUserLuck } from '../../rng/luck.js';
 import { onGambleXP } from '../../rank/xpEngine.js';
+import { awardGameXp } from '../../rank/xp.js';
+import { formatXpLine } from '../../ui/xpLine.js';
 import { getSetting } from '../../db/kv.js';
 import { rememberUserChannel } from '../../rank/announce.js';
 import { assertWithinMaxBet } from '../../config/maxBet.js';
@@ -67,12 +69,27 @@ export async function handleSlotsButton(interaction: ButtonInteraction) {
     const mode = uiExactMode(db, "guild");
     const sig = uiSigFigs(db);
     const balText = mode === "inline" ? renderAmountInline(newBal, sig) : formatBolt(newBal);
+
+    // Award XP for completed round
+    let xpLine = '';
+    try {
+      if (ranksEnabled) {
+        const grant = await awardGameXp(interaction.guildId!, userId, {
+          wager: BigInt(bet),
+          game: 'slots',
+          rounds: 1
+        });
+        const xpText = formatXpLine(grant);
+        if (xpText) {
+          xpLine = `\n${xpText}`;
+        }
+      }
+    } catch { }
+
     const embed = themedEmbed(theme, '🎰 Slots', `${headline}
-New balance: ${balText}`).setImage(
+New balance: ${balText}${xpLine}`).setImage(
       `attachment://${card.filename}`,
     );
-    // XP grant once per completed round
-    try { if (ranksEnabled) onGambleXP(interaction.guildId!, userId, bet, Number(newBal)); } catch { }
     await interaction.editReply({ embeds: [embed], files: [file], components: [] }).catch(() => { });
   });
 }

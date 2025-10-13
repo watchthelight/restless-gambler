@@ -17,6 +17,7 @@ import * as Theme from './theme.js';
 import * as RankCmd from '../rank/index.js';
 import * as RankAdminCmd from '../rank/admin.js';
 import * as LoanAdminCmd from '../loan-admin/index.js';
+import * as BugReportCmd from '../bugreport/index.js';
 
 type Builder = SlashCommandBuilder | SlashCommandOptionsOnlyBuilder | SlashCommandSubcommandsOnlyBuilder;
 type Slash = { name: string; data: Builder; run: (i: ChatInputCommandInteraction) => Promise<void> };
@@ -41,7 +42,7 @@ const DevDemo: Slash = {
   },
 };
 
-// Admin reboot (flat command) -> delegates to Admin button flow
+// Admin reboot (flat command) -> direct implementation
 const AdminReboot: Slash = {
   name: 'admin-reboot',
   data: new SlashCommandBuilder()
@@ -50,9 +51,27 @@ const AdminReboot: Slash = {
     .setDefaultMemberPermissions(null)
     .setDMPermission(false),
   run: async (i) => {
-    // mimic subcommand call
-    (i as any).options.getSubcommand = () => 'reboot';
-    await AdminCmd.execute(i as any);
+    await requireAdmin(i);
+    // Import dependencies
+    const { setRebootMarker } = await import('../../admin/rebootMarker.js');
+    const { replyCard } = await import('../../lib/replyCard.js');
+    const { isTestEnv } = await import('../../util/env.js');
+    const fs = await import('node:fs');
+
+    // Mark reboot return channel for confirmation
+    try {
+      await setRebootMarker({ guildId: i.guildId!, channelId: i.channelId });
+    } catch {}
+
+    await replyCard(i, {
+      title: 'Rebooting…',
+      description: 'The bot will restart shortly.'
+    });
+
+    try { fs.writeFileSync('.reboot.flag', '1'); } catch {}
+    if (!isTestEnv()) {
+      try { process.exit(0); } catch {}
+    }
   },
 };
 
@@ -91,6 +110,7 @@ export function getSlashCommands(): Slash[] {
   add({ name: RankCmd.data.name, data: RankCmd.data as Builder, run: RankCmd.execute as any });
   add({ name: RankAdminCmd.data.name, data: RankAdminCmd.data as Builder, run: RankAdminCmd.execute as any });
   add({ name: LoanAdminCmd.data.name, data: LoanAdminCmd.data as Builder, run: LoanAdminCmd.execute as any });
+  add({ name: BugReportCmd.data.name, data: BugReportCmd.data as Builder, run: BugReportCmd.execute as any });
   return out;
 }
 

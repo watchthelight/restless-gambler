@@ -8,10 +8,13 @@ import { ChatInputCommandInteraction, MessageFlags } from 'discord.js';
  */
 export async function ensureGuildInteraction(interaction: ChatInputCommandInteraction): Promise<boolean> {
   if (!interaction.inGuild()) {
-    await interaction.reply({
-      content: 'This command only works in servers.',
-      flags: MessageFlags.Ephemeral,
-    }).catch(() => {});
+    const content = 'This command only works in servers.';
+    // Handle both deferred and non-deferred states
+    if (interaction.deferred) {
+      await interaction.editReply({ content }).catch(() => {});
+    } else {
+      await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => {});
+    }
     return false;
   }
   return true;

@@ -20,6 +20,8 @@ import { ensureGuildInteraction } from '../interactions/guards.js';
 import { isRateLimited, getRateLimitReset } from '../util/ratelimit.js';
 import { withUserLuck } from '../rng/luck.js';
 import { onGambleXP } from '../rank/xpEngine.js';
+import { awardGameXp } from '../rank/xp.js';
+import { formatXpLine } from '../ui/xpLine.js';
 import { rememberUserChannel } from '../rank/announce.js';
 import { getSetting } from '../db/kv.js';
 
@@ -121,6 +123,9 @@ export async function handleEconomy(interaction: ChatInputCommandInteraction) {
         break;
       }
 
+      // Defer early to prevent interaction timeout
+      await safeDefer(interaction, { ephemeral: false });
+
       const user = interaction.options.getUser('user', true);
       const { getParsedAmount } = await import('../interactions/options.js');
       const parsed = await getParsedAmount(interaction, 'amount');
@@ -132,14 +137,11 @@ export async function handleEconomy(interaction: ChatInputCommandInteraction) {
       const cappedAmount = Math.min(amount, maxGiveAmount);
 
       if (cappedAmount < amount) {
-        await interaction.reply({
-          content: `You can only give up to 10% of your balance (${formatBolts(maxGiveAmount)}). Amount clamped to ${formatBolts(cappedAmount)}.`,
-          flags: MessageFlags.Ephemeral
+        await interaction.editReply({
+          content: `You can only give up to 10% of your balance (${formatBolts(maxGiveAmount)}). Amount clamped to ${formatBolts(cappedAmount)}.`
         });
         break;
       }
-
-      await safeDefer(interaction, { ephemeral: false });
       try {
         const { from } = await transfer(interaction.guildId!, interaction.user.id, user.id, amount);
         const pretty = formatBalance(from);
@@ -255,18 +257,27 @@ export async function handleEconomy(interaction: ChatInputCommandInteraction) {
         const pretty = formatBalance(result.newBal);
         const exact = formatExact(result.newBal);
         const betPretty = formatBolts(Math.abs(amount));
-        const headline = result.result === 'win' ? `WIN +${betPretty} 🪙. New balance:` : `LOSE -${betPretty} 🪙. New balance:`;
+
+        // Award XP for completed round
+        let xpLine = '';
+        try {
+          if (ranksEnabled) {
+            const grant = await awardGameXp(interaction.guildId!, interaction.user.id, {
+              wager: BigInt(amount),
+              game: 'gamble',
+              rounds: 1
+            });
+            const xpText = formatXpLine(grant);
+            if (xpText) {
+              xpLine = `\n${xpText}`;
+            }
+          }
+        } catch { }
+
+        const headline = result.result === 'win' ? `WIN +${betPretty} 🪙${xpLine}. New balance:` : `LOSE -${betPretty} 🪙${xpLine}. New balance:`;
         const embed = walletEmbed({ title: 'Gamble', headline, pretty, exact });
         console.log(JSON.stringify({ msg: 'econ_gamble_result', userId: interaction.user.id, bet: amount, result: result.result, delta: result.delta, guildId: interaction.guildId }));
         await interaction.editReply({ embeds: [embed], components: [], allowedMentions: { parse: [] } });
-
-        // XP grant once per completed round
-        try {
-          if (ranksEnabled) {
-            const wallet = getBalance(interaction.guildId!, interaction.user.id);
-            onGambleXP(interaction.guildId!, interaction.user.id, amount, Number(wallet));
-          }
-        } catch { }
       } catch (e: any) {
         await interaction.editReply({ content: e.message || 'Gamble failed.' });
       }

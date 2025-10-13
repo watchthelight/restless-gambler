@@ -54,7 +54,6 @@ export const data = makePublicAdmin(
   .addSubcommand((s) => s.setName('remove').setDescription('Remove guild admin').addUserOption((o) => o.setName('user').setDescription('Target user').setRequired(true)))
   .addSubcommand((s) => s.setName('list').setDescription('List admins'))
   .addSubcommand((s) => s.setName('whoami').setDescription('Show your role'))
-  .addSubcommand((s) => s.setName('reboot').setDescription('Reboot the bot (Admin+)'))
   .addSubcommand((s) =>
     s
       .setName('give')
@@ -301,12 +300,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       description: `Invoker: <@${interaction.user.id}>\nRole: ${role}`
     });
   } else if (sub === 'reboot') {
+    // Reboot subcommand removed - use /admin-reboot instead
     await requireAdmin(interaction);
-    // Mark reboot return channel for confirmation
-    try { await setRebootMarker({ guildId: interaction.guildId!, channelId: interaction.channelId }); } catch {}
-    await replyCard(interaction, { title: 'Rebooting…', description: 'The bot will restart shortly.' });
-    try { fs.writeFileSync('.reboot.flag', '1'); } catch {}
-    if (!isTestEnv()) { try { process.exit(0); } catch {} }
+    return replyCard(interaction, {
+      title: 'Command Moved',
+      description: 'The `/admin reboot` subcommand has been removed.\n\nPlease use `/admin-reboot` instead.'
+    });
   }
   else if (sub === 'sync-commands') {
     await requireAdmin(interaction);

@@ -279,6 +279,20 @@ const EXT: Record<string, Omit<HelpDoc, "name">> = {
     ],
     category: "misc",
   },
+  bugreport: {
+    title: "Bug Report",
+    desc: "Report bugs you encounter with any command. Your report will be posted publicly as a confirmation card, stored in the database, and sent to all SUPER admins via DM. Includes smart autocomplete that suggests your last executed command first, plus all available commands. You can optionally attach a screenshot or file to help demonstrate the issue.",
+    usage: [
+      "/bugreport command:<command> expected:<text> actual:<text>",
+      "/bugreport command:<command> expected:<text> actual:<text> attachment:<file>",
+    ],
+    examples: [
+      "/bugreport command:blackjack expected:Win 2:1 on blackjack actual:Only won 1:1",
+      "/bugreport command:balance expected:Show 1000 bolts actual:Shows 0 bolts",
+      "/bugreport command:roulette spin expected:Bet accepted actual:Error message appeared",
+    ],
+    category: "misc",
+  },
 };
 
 export function enabledHelpDocs(): HelpDoc[] {

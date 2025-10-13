@@ -32,7 +32,7 @@ function getGuildConfig(guildId: string) {
   const db = getGuildDb(guildId);
   return {
     rank_curve: (getSetting(db, "rank_curve") ?? "quadratic") as Curve,
-    rank_max_level: getSettingNum(db, "rank_max_level", 100),
+    rank_max_level: getSettingNum(db, "rank_max_level", 999999), // Effectively infinite
     rank_xp_rate: getSettingNum(db, "rank_xp_rate", 1.0),
     luck_bonus_bps: getSettingNum(db, "luck_bonus_bps", 150),
     luck_max_bps: getSettingNum(db, "luck_max_bps", 300),
@@ -93,17 +93,16 @@ export function addXP(guildId: string, userId: string, delta: number): AddXpResu
   let leveled = false;
 
   // Process level-ups
-  while (level < maxL) {
+  // Allow infinite leveling with increasing XP requirements
+  while (true) {
     const needed = xpNeededFor(level, curve, maxL);
     if (xp < needed) break;
     xp -= needed;
     level++;
     leveled = true;
-  }
 
-  // Cap XP at max level
-  if (level >= maxL) {
-    xp = Math.min(xp, xpNeededFor(maxL, curve, maxL));
+    // Safety check: prevent infinite loops if XP calculation breaks
+    if (level > maxL || !Number.isFinite(needed) || needed === 0) break;
   }
 
   // Save to database

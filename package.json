@@ -47,6 +47,7 @@
     "figlet": "^1.9.3",
     "gradient-string": "^2.0.2",
     "log-symbols": "^5.1.0",
+    "nanoid": "^5.1.6",
     "ora": "^7.0.1",
     "pino": "^9.13.1",
     "pretty-ms": "^9.3.0",

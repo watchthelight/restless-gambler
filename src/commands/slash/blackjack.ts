@@ -218,13 +218,15 @@ export async function execute(i: ChatInputCommandInteraction) {
   const db = getGuildDb(guildId);
   try { rememberUserChannel(guildId, userId, channelId); } catch {}
   if (sub === 'start') {
+    // Defer early to prevent interaction timeout during amount parsing
+    await safeDefer(i, false);
     const { getParsedAmount } = await import('../../interactions/options.js');
     const parsed = await getParsedAmount(i as any, 'bet');
     const bet = Number(parsed.value);
     const limits = blackjackLimits(db);
     // Only enforce min here; max is handled centrally by assertWithinMaxBet
-    if (bet < limits.minBet) { await i.reply({ content: `Minimum bet is ${formatBolts(limits.minBet)}.` }); return; }
-    try { assertWithinMaxBet(db, toBigInt(bet)); } catch (e: any) { if (e?.code === 'ERR_MAX_BET') { try { console.debug({ msg: 'bet_blocked', code: 'ERR_MAX_BET', guildId, userId, bet: String(bet) }); } catch {} await i.reply({ content: e.message }); return; } throw e; }
+    if (bet < limits.minBet) { await safeEdit(i, { content: `Minimum bet is ${formatBolts(limits.minBet)}.` }); return; }
+    try { assertWithinMaxBet(db, toBigInt(bet)); } catch (e: any) { if (e?.code === 'ERR_MAX_BET') { try { console.debug({ msg: 'bet_blocked', code: 'ERR_MAX_BET', guildId, userId, bet: String(bet) }); } catch {} await safeEdit(i, { content: e.message }); return; } throw e; }
     const bal = getBalance(guildId, userId);
     if (bal < BigInt(bet)) {
       const db = getGuildDb(guildId);

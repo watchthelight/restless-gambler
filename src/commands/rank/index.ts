@@ -62,7 +62,7 @@ async function handleView(
 
   // Get config
   const curve = (getSetting(db, "rank_curve") ?? "quadratic") as any;
-  const maxLevel = getSettingNum(db, "rank_max_level", 100);
+  const maxLevel = getSettingNum(db, "rank_max_level", 999999);
 
   // Calculate XP needed for next level
   const xpNeeded = xpNeededFor(level, curve, maxLevel);
@@ -88,7 +88,7 @@ async function handleView(
     .addFields(
       {
         name: "Level",
-        value: `**${level}**${level >= maxLevel ? " (MAX)" : ""}`,
+        value: `**${level}**`,
         inline: true,
       },
       {
@@ -110,16 +110,14 @@ async function handleView(
     )
     .setThumbnail(targetUser.displayAvatarURL());
 
-  // Add next reward preview if not at max level
-  if (level < maxLevel) {
-    const luckBonus = getSettingNum(db, "luck_bonus_bps", 150);
-    const luckDuration = getSettingNum(db, "luck_duration_sec", 3600);
-    embed.addFields({
-      name: "Next Rank Reward",
-      value: `+${(luckBonus / 100).toFixed(2)}% luck for ${Math.floor(luckDuration / 60)} minutes`,
-      inline: false,
-    });
-  }
+  // Always show next reward preview (levels are infinite)
+  const luckBonus = getSettingNum(db, "luck_bonus_bps", 150);
+  const luckDuration = getSettingNum(db, "luck_duration_sec", 3600);
+  embed.addFields({
+    name: "Next Rank Reward",
+    value: `+${(luckBonus / 100).toFixed(2)}% luck for ${Math.floor(luckDuration / 60)} minutes`,
+    inline: false,
+  });
 
   await interaction.reply({ embeds: [embed] });
 }

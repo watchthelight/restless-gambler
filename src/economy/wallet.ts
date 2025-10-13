@@ -50,8 +50,8 @@ export async function transfer(
   if (amt <= 0n) throw new Error('Amount must be positive');
   // Order locks deterministically to avoid deadlocks
   const [a, b] = [`${guildId}:${fromUserId}`, `${guildId}:${toUserId}`].sort();
-  return userLocks.runExclusive(`wallet:${a}`, () =>
-    userLocks.runExclusive(`wallet:${b}`, () => {
+  return userLocks.runExclusive(`wallet:${a}`, async () => {
+    return await userLocks.runExclusive(`wallet:${b}`, async () => {
       const db = getGuildDb(guildId);
       const now = Date.now();
       const txn = db.transaction(() => {
@@ -76,6 +76,6 @@ export async function transfer(
         return { from: newFrom, to: newTo };
       });
       return txn() as unknown as { from: bigint; to: bigint };
-    }),
-  );
+    });
+  });
 }

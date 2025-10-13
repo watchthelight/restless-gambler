@@ -57,6 +57,8 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
+  // Defer immediately to prevent interaction timeout
+  await safeDefer(interaction, false);
   if (!await ensureGuildInteraction(interaction)) return;
 
   const userId = interaction.user.id;
@@ -91,11 +93,11 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   // Centralized max bet guard
   try { assertWithinMaxBet(db, BigInt(parsed.value)); } catch (e: any) {
     if (e?.code === 'ERR_MAX_BET') { try { console.debug({ msg: 'bet_blocked', code: 'ERR_MAX_BET', guildId: interaction.guildId, userId, bet: String(betAmount) }); } catch {}
-      await interaction.reply({ content: e.message }); return; }
+      await safeEdit(interaction, { content: e.message }); return; }
     throw e;
   }
   if (betAmount < minBet) {
-    await interaction.reply({ content: `Minimum bet is ${formatBolts(minBet)}.` });
+    await safeEdit(interaction, { content: `Minimum bet is ${formatBolts(minBet)}.` });
     return;
   }
   const bal = getBalance(interaction.guildId!, userId);
@@ -103,11 +105,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const mode = uiExactMode(db, "guild");
     const sig = uiSigFigs(db);
     const balText = mode === "inline" ? renderAmountInline(bal, sig) : formatBolts(bal);
-    await interaction.reply({ content: `Insufficient balance (${balText}).` });
+    await safeEdit(interaction, { content: `Insufficient balance (${balText}).` });
     return;
   }
-
-  await safeDefer(interaction, false);
   try {
     const bet: Bet = { type, amount: betAmount, selection };
     const ranksEnabled = (getSetting(db, 'features.ranks.enabled') !== 'false');

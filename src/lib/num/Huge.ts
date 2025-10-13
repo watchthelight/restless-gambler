@@ -349,8 +349,8 @@ export class HugeDecimal {
     if (this.isZero()) return HugeDecimal.ZERO;
     if (exponent < 0) throw new Error('Negative exponents not supported in pow');
 
-    let result = HugeDecimal.ONE;
-    let base = this;
+    let result: HugeDecimal = HugeDecimal.ONE;
+    let base: HugeDecimal = this;
     let exp = exponent;
 
     // Binary exponentiation
@@ -358,7 +358,7 @@ export class HugeDecimal {
       if (exp % 2 === 1) {
         result = result.mul(base);
       }
-      base = base.mul(base);
+      base = base.mul(base) as HugeDecimal;
       exp = Math.floor(exp / 2);
     }
 

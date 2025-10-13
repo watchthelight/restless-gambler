@@ -7,17 +7,18 @@ import { themedEmbed } from './embeds.js';
 import { getGuildTheme } from './theme.js';
 import { getClient } from '../bot/client.js';
 import type { TextChannel } from 'discord.js';
+import type { HugeDecimal } from '../lib/num/index.js';
 
 type GameResultPayload =
-  | { kind: 'slots'; grid: string[][]; bet: number; payout: number; delta: number; balance: number | bigint }
-  | { kind: 'roulette'; number: number; color: string; bet: number; payout: number; delta: number; balance: number | bigint }
-  | { kind: 'blackjack'; dealer: string[]; player: string[]; bet: number; payout: number; delta: number; balance: number | bigint }
-  | { kind: 'holdem'; board: string[]; hero: string[]; bet: number; delta: number; balance: number | bigint };
+  | { kind: 'slots'; grid: string[][]; bet: number; payout: number; delta: number; balance: number | bigint | HugeDecimal }
+  | { kind: 'roulette'; number: number; color: string; bet: number; payout: number; delta: number; balance: number | bigint | HugeDecimal }
+  | { kind: 'blackjack'; dealer: string[]; player: string[]; bet: number; payout: number; delta: number; balance: number | bigint | HugeDecimal }
+  | { kind: 'holdem'; board: string[]; hero: string[]; bet: number; delta: number; balance: number | bigint | HugeDecimal };
 
 type ListPayload = { rows: { rank: number; user: string; value: number }[] };
 type NoticePayload = { title: string; message: string };
 
-type WalletPayload = { balance: number | bigint; title?: string; subtitle?: string };
+type WalletPayload = { balance: number | bigint | HugeDecimal; title?: string; subtitle?: string };
 
 type SyncPayload = { globalCount: number; perGuild: Array<{ guildId: string; purged: number }>; purgedGlobal?: number };
 
@@ -427,7 +428,11 @@ function getGameVals(payload: GameResultPayload) {
   const betN = 'bet' in payload ? payload.bet : 0;
   const payoutN = 'payout' in payload ? payload.payout : 0;
   const deltaN = 'delta' in payload ? payload.delta : 0;
-  const balanceN = 'balance' in payload ? payload.balance : 0;
+  // Convert HugeDecimal to bigint for display
+  const balanceRaw = 'balance' in payload ? payload.balance : 0;
+  const balanceN = typeof balanceRaw === 'object' && 'toBigInt' in balanceRaw
+    ? balanceRaw.toBigInt()
+    : (typeof balanceRaw === 'bigint' ? balanceRaw : BigInt(balanceRaw));
   return { betN, payoutN, deltaN, balanceN };
 }
 

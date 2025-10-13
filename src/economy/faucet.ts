@@ -1,5 +1,5 @@
 import { getGuildDb } from '../db/connection.js';
-import { adjustBalance, getBalance } from './wallet.js';
+import { adjustBalance, getBalance, getBalanceBigInt } from './wallet.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -41,7 +41,7 @@ export async function claimDaily(guildId: string, userId: string, baseAmount = 2
     const { setCooldown } = await import('./cooldowns.js');
     setCooldown(guildId, userId, 'daily', 24 * 60 * 60);
   } catch { }
-  return getBalance(guildId, userId);
+  return getBalanceBigInt(guildId, userId);
 }
 
 export function getGuildFaucetLimit(guildId: string | null): number {
@@ -58,5 +58,5 @@ export async function faucet(guildId: string, userId: string, amount: number): P
   const limit = getGuildFaucetLimit(guildId);
   const grant = Math.max(1, Math.min(limit, Math.floor(amount || limit)));
   await adjustBalance(guildId, userId, grant, 'faucet');
-  return getBalance(guildId, userId);
+  return getBalanceBigInt(guildId, userId);
 }

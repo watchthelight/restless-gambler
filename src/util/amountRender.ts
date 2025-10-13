@@ -1,5 +1,6 @@
 import { ButtonBuilder, ButtonStyle, ActionRowBuilder } from "discord.js";
 import { formatBalance } from "./formatBalance.js"; // existing compact formatter (k..centillion)
+import type { HugeDecimal } from "../lib/num/index.js";
 
 export type AmountDetail = {
     compact: string;
@@ -16,13 +17,17 @@ const UNIT_MAP: Record<string, { name: string; exponent: number }> = {
     // extend if your formatBalance exposes more
 };
 
-function toBigStr(v: number | bigint): { neg: boolean, s: string } {
+function toBigStr(v: number | bigint | HugeDecimal): { neg: boolean, s: string } {
+    if (typeof v === 'object' && 'toBigInt' in v) {
+        const bi = v.toBigInt();
+        return { neg: bi < 0n, s: (bi < 0n ? -bi : bi).toString() };
+    }
     if (typeof v === "bigint") return { neg: v < 0n, s: (v < 0n ? -v : v).toString() };
-    const n = Math.trunc(v);
+    const n = Math.trunc(v as number);
     return { neg: n < 0, s: String(Math.abs(n)) };
 }
 
-export function describeAmount(v: number | bigint, sig = 3): AmountDetail {
+export function describeAmount(v: number | bigint | HugeDecimal, sig = 3): AmountDetail {
     const { neg, s } = toBigStr(v);
     const exp = s.length - 1; // 10^exp
     const int = s[0];
@@ -36,12 +41,12 @@ export function describeAmount(v: number | bigint, sig = 3): AmountDetail {
     return { compact, exact, scientific, unit };
 }
 
-export function renderAmountInline(v: number | bigint, sig = 3): string {
+export function renderAmountInline(v: number | bigint | HugeDecimal, sig = 3): string {
     const d = describeAmount(v, sig);
     return `${d.compact}${d.exact ? ` *(= ${d.exact})*` : ""}`;
 }
 
-export function componentsForExact(v: number | bigint, sig = 3) {
+export function componentsForExact(v: number | bigint | HugeDecimal, sig = 3) {
     const d = describeAmount(v, sig);
     const valueRaw = d.exact.replace(/,/g, "");
     const btn = new ButtonBuilder().setCustomId(`amt:exact:${valueRaw}`).setLabel("Exact").setStyle(ButtonStyle.Secondary);
